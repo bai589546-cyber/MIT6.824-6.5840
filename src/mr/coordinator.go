@@ -6,11 +6,38 @@ import "os"
 import "net/rpc"
 import "net/http"
 
+type Task struct {
+	fileName 	string
+	id 			int
+	startTime	time.Time
+	status		TaskStatus
+}
 
 type Coordinator struct {
 	// Your definitions here.
+	files 		[]string
+	nReduce 	int
+	nMap 		int
+	phase 		SchedulePhase
+	tasks 		[]Task
 
+	heartbeatCh 	chan heartbeatMsg
+	reportCh		chan report reportMsg
+	doneCh			chan struct{}
 }
+
+type heartbeatMsg struct {
+	response 	*HeartbeatResponse
+	ok 			chan struct{}
+}
+
+type reoprtMsg struct {
+	request *ReportRequest
+	ok		chan struct{}
+}
+
+
+
 
 // Your code here -- RPC handlers for the worker to call.
 
@@ -52,6 +79,34 @@ func (c *Coordinator) Done() bool {
 
 
 	return ret
+}
+
+func (c *Coordinator) Heartbeat(request *HeartbeatRequest, response *HeartbeatResponse) error {
+	msg := heartbeatMsg{response, make(chan struct{})}
+	c.heartbeatCh <- msg
+	<- msg.ok
+	return nil
+}
+
+func (c *Coordinator) Report(request *ReportRequest, response *ReportResponse) error {
+	msg := reoprtMsg{request, make(chan struct{})}
+	c.reportCh <- msg
+	<- msg.ok
+	return nil
+}
+
+func (c *Coordinator) schedule() {
+	c.initMapPhase()
+	for {
+		select {
+		case msg := <- c.heartbeatCh:
+			...
+			msg.ok <- struct{}{}
+		case msg := <- c.reportCh:
+			...
+			msg.ok <- struct{}{}
+		}
+	}
 }
 
 //
