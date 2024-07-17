@@ -5,35 +5,91 @@ import "net"
 import "os"
 import "net/rpc"
 import "net/http"
+import "time"
+// import "fmt"
+
+/*
+number of max worker
+*/
+const NWORKER int = 10
+
+type taskStatus = int
+type SchedulePhase = int
+type JobType = int
+
+
+const (
+	Idle 		taskStatus = iota
+	Paused
+	Running
+	Finished
+)
+
+const (
+	Begin		SchedulePhase =  iota
+	Map 		
+	Reduce
+	Done
+)
+
+const (
+	MapJob		JobType = iota
+	ReduceJob
+	WaitJob
+	CompleteJob
+)
+
 
 type Task struct {
-	fileName 	string
-	id 			int
-	startTime	time.Time
-	status		TaskStatus
+	FileName 	string
+	Id 			int
+	StartTime	time.Time
+	Sstatus		taskStatus
+}
+type heartbeatMsg struct {
+	Rresponse 	*HeartbeatResponse
+	Ok 			chan struct{}
+}
+
+type reportMsg struct {
+	Request *ReportRequest
+	Ok		chan struct{}
 }
 
 type Coordinator struct {
 	// Your definitions here.
 	files 		[]string
-	nReduce 	int
+	NnReduce 	int
 	nMap 		int
 	phase 		SchedulePhase
 	tasks 		[]Task
 
 	heartbeatCh 	chan heartbeatMsg
-	reportCh		chan report reportMsg
+	reportCh		chan reportMsg
 	doneCh			chan struct{}
 }
 
-type heartbeatMsg struct {
-	response 	*HeartbeatResponse
-	ok 			chan struct{}
+type ReportRequest struct {
+	JjobType		JobType
+	TtaskId		int
+	Sstatus 		taskStatus
 }
 
-type reoprtMsg struct {
-	request *ReportRequest
-	ok		chan struct{}
+type ReportResponse struct {
+	JjobType		JobType
+	TtaskId		int
+}	// no use
+
+type HeartbeatRequest struct {
+	JjobType		JobType
+	TtaskId		int
+}	// no use
+
+type HeartbeatResponse struct {
+	JjobType		JobType
+	TtaskId		int 		// real TtaskId, 真正的 task Id, map 和 reduce task 都各自从 0 开始计数
+	TtaskPtr		*Task
+	NnReduce     int
 }
 
 
@@ -73,38 +129,180 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
+	ret := true
 
 	// Your code here.
-
+	for i := 0; i < c.nMap + c.NnReduce; i++ {
+		if c.tasks[i].Sstatus != Done {
+			ret = false
+			break
+		}
+	}
 
 	return ret
 }
 
-func (c *Coordinator) Heartbeat(request *HeartbeatRequest, response *HeartbeatResponse) error {
+func (c *Coordinator) HeartBeat(request *HeartbeatRequest, response *HeartbeatResponse) error {
 	msg := heartbeatMsg{response, make(chan struct{})}
 	c.heartbeatCh <- msg
-	<- msg.ok
+	<- msg.Ok
+	// fmt.Println("HearBeat Begin ... msg = ", msg)
+	// clean up msg.Ok channel & msg.Ok is ready
 	return nil
 }
 
-func (c *Coordinator) Report(request *ReportRequest, response *ReportResponse) error {
-	msg := reoprtMsg{request, make(chan struct{})}
+func (c *Coordinator) Report(request *ReportRequest, rresponse *ReportResponse) error {
+	msg := reportMsg{request, make(chan struct{})}
 	c.reportCh <- msg
-	<- msg.ok
+	<- msg.Ok
+	// fmt.Println("Report Begin ... msg = ", msg)
+	// clean up msg.Ok channel & msg.Ok is ready
 	return nil
 }
 
 func (c *Coordinator) schedule() {
-	c.initMapPhase()
+	// c.initMapPhase()
+	// fmt.Println("000 c.phase = ", c.phase)
+	// fmt.Println("001 Begin = ", Begin)
+	// fmt.Println("002 Map = ", Map)
+	// fmt.Println("003 Reduce = ", Reduce)
+	// fmt.Println("004 Done = ", Done)
 	for {
+		// fmt.Println("005 ...")
 		select {
 		case msg := <- c.heartbeatCh:
-			...
-			msg.ok <- struct{}{}
+			// asking for a map / reduce task
+			// fmt.Println("c.phase = ", c.phase)
+			if c.phase == Done {
+				msg.Rresponse.JjobType = CompleteJob
+				msg.Rresponse.TtaskPtr = nil
+				msg.Rresponse.NnReduce = c.NnReduce
+				msg.Rresponse.TtaskId = 0
+				// fmt.Println("State Done, msg.Rresponse of HeartBeat = ", msg.Rresponse)
+			} else if c.phase == Begin {
+				c.phase = Map
+				msg.Rresponse.JjobType = MapJob
+				msg.Rresponse.TtaskPtr = &(c.tasks[0])
+				msg.Rresponse.NnReduce = c.NnReduce
+				msg.Rresponse.TtaskId = 0
+				c.tasks[0].StartTime = time.Now()
+				c.tasks[0].Sstatus = Running
+				// fmt.Println("State Begin, msg.Rresponse of HeartBeat =  ", msg.Rresponse)
+			} else if c.phase == Map {
+				askTaskFlag := false
+				for i := 0; i < c.nMap; i++ {
+					if (c.tasks[i].Sstatus == Idle || c.tasks[i].Sstatus == Paused) {
+						askTaskFlag = true
+						c.tasks[i].Sstatus = Running
+
+						msg.Rresponse.JjobType = MapJob
+						msg.Rresponse.TtaskPtr = &(c.tasks[i])
+						msg.Rresponse.NnReduce = c.NnReduce
+						msg.Rresponse.TtaskId = i
+						c.tasks[i].StartTime = time.Now()
+
+						break
+					}else if (c.tasks[i].Sstatus == Running) {
+						curTime := time.Now()
+						if curTime.Unix() - c.tasks[i].StartTime.Unix() > 10 {
+							c.tasks[i].StartTime = curTime
+							
+							askTaskFlag = true
+
+							msg.Rresponse.JjobType = MapJob
+							msg.Rresponse.TtaskPtr = &(c.tasks[i])
+							msg.Rresponse.NnReduce = c.NnReduce
+							msg.Rresponse.TtaskId = i
+
+							break
+						}
+					}
+				}
+				if askTaskFlag == false {
+					msg.Rresponse.JjobType = WaitJob
+					msg.Rresponse.TtaskPtr = nil
+					msg.Rresponse.NnReduce = c.NnReduce
+					msg.Rresponse.TtaskId = 0
+				}
+				// fmt.Println("State Map, msg.Rresponse of HeartBeat =  ", msg.Rresponse)
+			} else if c.phase == Reduce {
+				askTaskFlag := false
+				for index := 0; index < c.NnReduce; index++ {
+					i := index + c.nMap
+					if (c.tasks[i].Sstatus == Idle || c.tasks[i].Sstatus == Paused) {
+						askTaskFlag = true
+						c.tasks[i].Sstatus = Running
+
+						msg.Rresponse.JjobType = ReduceJob
+						msg.Rresponse.TtaskPtr = &(c.tasks[i])
+						msg.Rresponse.NnReduce = c.NnReduce
+						msg.Rresponse.TtaskId = index
+						c.tasks[i].StartTime = time.Now()
+
+						break
+					}else if (c.tasks[i].Sstatus == Running) {
+						curTime := time.Now()
+						if curTime.Unix() - c.tasks[i].StartTime.Unix() > 10 {
+							c.tasks[i].StartTime = curTime
+							
+							askTaskFlag = true
+
+							msg.Rresponse.JjobType = ReduceJob
+							msg.Rresponse.TtaskPtr = &(c.tasks[i])
+							msg.Rresponse.NnReduce = c.NnReduce
+							msg.Rresponse.TtaskId = index
+
+							break
+						}
+					}
+				}
+				if askTaskFlag == false {
+					msg.Rresponse.JjobType = WaitJob
+					msg.Rresponse.TtaskPtr = nil
+					msg.Rresponse.NnReduce = c.NnReduce
+					msg.Rresponse.TtaskId = 0
+				}
+				// fmt.Println("State Reduce, msg.Rresponse of HeartBeat =  ", msg.Rresponse)
+			}
+			msg.Ok <- struct{}{}
 		case msg := <- c.reportCh:
-			...
-			msg.ok <- struct{}{}
+			// fmt.Println("2 c.phase =  ", c.phase)
+			// a map / reduce task is done, change task info
+			taskIdTemp := msg.Request.TtaskId
+			if msg.Request.JjobType == ReduceJob {
+				taskIdTemp = taskIdTemp + c.nMap
+			}
+			c.tasks[taskIdTemp].Sstatus = Finished
+
+			// check all tasks, determine whether done
+			if (c.phase == Reduce) {
+				flag2Change := true
+				for i := 0; i < (c.nMap + c.NnReduce); i++ {
+					if c.tasks[i].Sstatus != Finished {
+						flag2Change = false
+						break
+					}
+				}
+				if flag2Change == true {
+					c.phase = Done
+				}
+			}
+			// fmt.Println("3 c.phase =  ", c.phase)
+			// check all map tasks, determine whether go to reduce
+			if (c.phase == Begin || c.phase == Map) {
+				flag2Change := true
+				for i := 0; i < c.nMap; i++ {
+					if c.tasks[i].Sstatus != Finished {
+						flag2Change = false
+						break
+					}
+				}
+				if flag2Change == true {
+					c.phase = Reduce
+				}
+			}
+			// fmt.Println("4 c.phase =  ", c.phase)
+			msg.Ok <- struct{}{}
 		}
 	}
 }
@@ -112,14 +310,30 @@ func (c *Coordinator) schedule() {
 //
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
-// nReduce is the number of reduce tasks to use.
+// NnReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{}
 
 	// Your code here.
+	c.nMap = len(files)
+	c.NnReduce = nReduce
+	var i int = 0
+	currentTime := time.Now()
+	for ; i < c.nMap; i++ {
+		c.tasks = append(c.tasks, Task{files[i], i, currentTime, Idle})
+		c.files = append(c.files, files[i])
+	}
+	for ; i < nReduce + c.nMap; i++ {
+		c.tasks = append(c.tasks, Task{"", i, currentTime, Idle})
+	}
+	c.heartbeatCh 	= make(chan heartbeatMsg)
+	c.reportCh		= make(chan reportMsg)
+	c.doneCh 		= make(chan struct{})
+	c.phase 		= Begin
 
-
+	// log.Printf("Initial state of Coordinator =  %+v \n", c)
+	go c.schedule()
 	c.server()
 	return &c
 }
