@@ -105,8 +105,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			doReport(request)
 		case WaitJob:
 			time.Sleep(1 * time.Second)
-			request := ReportRequest{WaitJob, response.TtaskId, Idle}
-			doReport(request)
+			// request := ReportRequest{WaitJob, response.TtaskId, Idle}
+			// doReport(request)
 		case CompleteJob:
 			return
 		default:
@@ -194,7 +194,9 @@ func doMapTask(mapf func(string, string) []KeyValue,
 			}
 		} else {
 			fmt.Println(filenameArray[index], " exists!\n", )
-			filePtr[index], _ = os.OpenFile(filenameArray[index], os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			// filePtr[index], _ = os.OpenFile(filenameArray[index], os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			index--
+			continue
 		}
 	}
 
@@ -222,8 +224,8 @@ func doMapTask(mapf func(string, string) []KeyValue,
 			}
 		} else {
 			fmt.Println(reduceFilename, " exists!\n")
-			os.Remove(reduceFilename)
-			os.Rename(filenameArray[index], reduceFilename)
+			// os.Remove(reduceFilename)
+			// os.Rename(filenameArray[index], reduceFilename)
 		}
 		
 		filePtr[index].Close()
@@ -302,11 +304,31 @@ func doReduceTask(reducef func(key string, values []string) string,
 	sort.Strings(keys)
 
 	reduceFilename := "mr-out-" + strconv.Itoa(response.TtaskId)
-	oname := generateRandomString(20)
-	ofile, err := os.Create(oname)
-	if err != nil {
-		return err
+	// oname := generateRandomString(20)
+	// ofile, err := os.Create(oname)
+	// if err != nil {
+	// 	return err
+	// }
+	var oname string
+	var ofile *os.File
+	
+	for ;;{
+		oname = generateRandomString(20)
+		_, err := os.Stat(oname)
+		if err != nil {
+			if os.IsNotExist(err) {
+				ofile, _ = os.Create(oname)
+				break
+			} else {
+				fmt.Println("(1)Error occured:", err)
+			}
+		} else {
+			fmt.Println(oname, " exists!\n", )
+			continue
+		}
 	}
+	
+
 	defer ofile.Close()
 
 	for _, key := range keys {
@@ -325,8 +347,8 @@ func doReduceTask(reducef func(key string, values []string) string,
 		}
 	} else {
 		fmt.Println(reduceFilename, " exists!\n")
-		os.Remove(reduceFilename)
-		os.Rename(oname, reduceFilename)
+		// os.Remove(reduceFilename)
+		// os.Rename(oname, reduceFilename)
 	}
 
 

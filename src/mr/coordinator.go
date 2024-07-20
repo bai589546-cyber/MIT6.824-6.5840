@@ -26,8 +26,7 @@ const (
 )
 
 const (
-	Begin		SchedulePhase =  iota
-	Map 		
+	Map 		SchedulePhase =  iota
 	Reduce
 	Done
 )
@@ -129,17 +128,10 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := true
 
 	// Your code here.
-	for i := 0; i < c.nMap + c.NnReduce; i++ {
-		if c.tasks[i].Sstatus != Done {
-			ret = false
-			break
-		}
-	}
-
-	return ret
+	time.Sleep(time.Second * 1)
+	return (c.phase == Done)
 }
 
 func (c *Coordinator) HeartBeat(request *HeartbeatRequest, response *HeartbeatResponse) error {
@@ -179,15 +171,6 @@ func (c *Coordinator) schedule() {
 				msg.Rresponse.NnReduce = c.NnReduce
 				msg.Rresponse.TtaskId = 0
 				// fmt.Println("State Done, msg.Rresponse of HeartBeat = ", msg.Rresponse)
-			} else if c.phase == Begin {
-				c.phase = Map
-				msg.Rresponse.JjobType = MapJob
-				msg.Rresponse.TtaskPtr = &(c.tasks[0])
-				msg.Rresponse.NnReduce = c.NnReduce
-				msg.Rresponse.TtaskId = 0
-				c.tasks[0].StartTime = time.Now()
-				c.tasks[0].Sstatus = Running
-				// fmt.Println("State Begin, msg.Rresponse of HeartBeat =  ", msg.Rresponse)
 			} else if c.phase == Map {
 				askTaskFlag := false
 				for i := 0; i < c.nMap; i++ {
@@ -269,15 +252,24 @@ func (c *Coordinator) schedule() {
 			// fmt.Println("2 c.phase =  ", c.phase)
 			// a map / reduce task is done, change task info
 			taskIdTemp := msg.Request.TtaskId
+			// fmt.Println("reported taskId =  ", taskIdTemp)
+			// if msg.Request.JjobType == WaitJob {
+			// 	msg.Ok <- struct{}{}
+			// 	continue
+			// }
 			if msg.Request.JjobType == ReduceJob {
 				taskIdTemp = taskIdTemp + c.nMap
 			}
+			// if time.Now().Unix() - c.tasks[taskIdTemp].StartTime.Unix() > 10 {
+			// 	msg.Ok <- struct{}{}
+			// 	continue
+			// }
 			c.tasks[taskIdTemp].Sstatus = Finished
 
 			// check all tasks, determine whether done
 			if (c.phase == Reduce) {
 				flag2Change := true
-				for i := 0; i < (c.nMap + c.NnReduce); i++ {
+				for i := c.nMap; i < (c.nMap + c.NnReduce); i++ {
 					if c.tasks[i].Sstatus != Finished {
 						flag2Change = false
 						break
@@ -289,7 +281,7 @@ func (c *Coordinator) schedule() {
 			}
 			// fmt.Println("3 c.phase =  ", c.phase)
 			// check all map tasks, determine whether go to reduce
-			if (c.phase == Begin || c.phase == Map) {
+			if (c.phase == Map) {
 				flag2Change := true
 				for i := 0; i < c.nMap; i++ {
 					if c.tasks[i].Sstatus != Finished {
@@ -301,7 +293,7 @@ func (c *Coordinator) schedule() {
 					c.phase = Reduce
 				}
 			}
-			// fmt.Println("4 c.phase =  ", c.phase)
+			
 			msg.Ok <- struct{}{}
 		}
 	}
@@ -330,7 +322,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.heartbeatCh 	= make(chan heartbeatMsg)
 	c.reportCh		= make(chan reportMsg)
 	c.doneCh 		= make(chan struct{})
-	c.phase 		= Begin
+	c.phase 		= Map
 
 	// log.Printf("Initial state of Coordinator =  %+v \n", c)
 	go c.schedule()
