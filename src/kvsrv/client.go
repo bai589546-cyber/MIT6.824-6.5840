@@ -8,8 +8,8 @@ import "math/big"
 type Clerk struct {
 	server *labrpc.ClientEnd
 	// You will have to modify this struct.
-	// ClientId 		int
-	// TransactionId 	int
+	ClientId 		int
+	TransactionId 	int64
 }
 
 func nrand() int64 {
@@ -23,8 +23,8 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
 	// You'll have to add code here.
-	// ClientId = -1
-	// TransactionId = -1
+	ck.ClientId = -1
+	ck.TransactionId = nrand()
 	return ck
 }
 
@@ -41,11 +41,19 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	args := GetArgs{key}
+	args := GetArgs{key, ck.ClientId, ck.TransactionId}
 	reply := GetReply{}
 	for ;; {
 		ok := ck.server.Call("KVServer.Get", &args, &reply)
 		if ok {
+			if ck.ClientId == -1 {
+				ck.ClientId = reply.ClientId
+				// update ClientId at first query round
+			}
+			if ck.TransactionId == (reply.AckId - 1) {
+				ck.TransactionId += 1
+				// ack
+			}
 			return reply.Value
 		}
 	}
@@ -66,13 +74,24 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	if op == "Append" {
 		put_or_append = Appendtype
 	} 
-	args := PutAppendArgs{key, value, put_or_append}
+	args := PutAppendArgs{key, value, put_or_append, ck.ClientId, ck.TransactionId}
 	reply := PutAppendReply{}
-	ok := ck.server.Call("KVServer."+op, &args, &reply)
+	for ;; {
+		ok := ck.server.Call("KVServer."+op, &args, &reply)
 
-	if ok {
-		return reply.Value
+		if ok {
+			if ck.ClientId == -1 {
+				ck.ClientId = reply.ClientId
+				// update ClientId at first query round
+			}
+			if ck.TransactionId == (reply.AckId - 1) {
+				ck.TransactionId = reply.AckId
+				// ack
+			}
+			return reply.Value
+		}
 	}
+	
 	return ""
 }
 

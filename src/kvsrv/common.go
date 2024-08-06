@@ -14,28 +14,28 @@ type PutAppendArgs struct {
 	// otherwise RPC will break.
 	PutOrAppend	PutAppendType
 
-	// ClientId 		int
-	// TransactionId 	int
+	ClientId 		int
+	TransactionId 	int64
 }
 
 type PutAppendReply struct {
 	Value string
 
-	// ClientId 		int
-	// TransactionId 	int
+	ClientId 		int
+	AckId 	int64
 }
 
 type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
 
-	// ClientId 		int
-	// TransactionId 	int
+	ClientId 		int
+	TransactionId 	int64
 }
 
 type GetReply struct {
 	Value string
 
-	// ClientId 		int
-	// TransactionId 	int
+	ClientId 		int
+	AckId 	int64
 }
