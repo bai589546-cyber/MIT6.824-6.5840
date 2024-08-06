@@ -8,6 +8,8 @@ import "math/big"
 type Clerk struct {
 	server *labrpc.ClientEnd
 	// You will have to modify this struct.
+	// ClientId 		int
+	// TransactionId 	int
 }
 
 func nrand() int64 {
@@ -21,6 +23,8 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
 	// You'll have to add code here.
+	// ClientId = -1
+	// TransactionId = -1
 	return ck
 }
 
@@ -37,6 +41,14 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
+	args := GetArgs{key}
+	reply := GetReply{}
+	for ;; {
+		ok := ck.server.Call("KVServer.Get", &args, &reply)
+		if ok {
+			return reply.Value
+		}
+	}
 	return ""
 }
 
@@ -50,6 +62,17 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	// You will have to modify this function.
+	var put_or_append PutAppendType = Puttype
+	if op == "Append" {
+		put_or_append = Appendtype
+	} 
+	args := PutAppendArgs{key, value, put_or_append}
+	reply := PutAppendReply{}
+	ok := ck.server.Call("KVServer."+op, &args, &reply)
+
+	if ok {
+		return reply.Value
+	}
 	return ""
 }
 
