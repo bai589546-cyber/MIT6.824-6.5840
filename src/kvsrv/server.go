@@ -3,7 +3,6 @@ package kvsrv
 import (
 	"log"
 	"sync"
-	"time"
 	// "fmt"
 )
 
@@ -18,7 +17,10 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 type ClientAckTime struct {
 	AckID 		int64
-	UpdateTime 	time.Time
+	
+	KeyBuffer	string
+	ValueBuffer	string
+	// true = Put; false = Append
 }
 
 type KVServer struct {
@@ -31,10 +33,17 @@ type KVServer struct {
 
 }
 
+func (kv *KVServer) FlushBuffer(Clientid int) {
+	if Clientid < 0 || Clientid > kv.LenAckTime {
+		return
+	}
+	kv.KeyValue[kv.AckTime[Clientid].KeyBuffer] = kv.AckTime[Clientid].ValueBuffer
+}
+
 func (kv *KVServer) NewClient(TransactionId int64) int {
 	NewClientId := kv.LenAckTime
 	kv.LenAckTime = 1 + kv.LenAckTime
-	client := ClientAckTime{TransactionId, time.Now()}
+	client := ClientAckTime{TransactionId, "", ""}
 	kv.AckTime = append(kv.AckTime, client)
 	return NewClientId
 }
@@ -44,13 +53,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
-	value, ok := kv.KeyValue[args.Key]
-
-	if ok {
-		reply.Value = value
-	} else {
-		reply.Value = ""
-	}
+	
 
 	// fmt.Println("Get, origin value = ", value)
 	// fmt.Println("Get, transaction id = ", args.TransactionId)
@@ -58,9 +61,10 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 
 	var clientId int = args.ClientId
-	if clientId != -1 && args.TransactionId == (kv.AckTime[clientId].AckID) {
-		kv.AckTime[clientId].AckID = 1 + kv.AckTime[clientId].AckID
-		kv.AckTime[clientId].UpdateTime = time.Now()
+	if clientId != -1 {
+		if args.TransactionId == (kv.AckTime[clientId].AckID) {
+			kv.AckTime[clientId].AckID = 1 + kv.AckTime[clientId].AckID
+		}
 	}
 	reply.ClientId = args.ClientId
 	reply.AckId = args.TransactionId + 1
@@ -68,6 +72,15 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	if clientId != -1 {
 		reply.AckId = kv.AckTime[clientId].AckID
 	}
+
+	value, ok := kv.KeyValue[args.Key]
+
+	if ok {
+		reply.Value = value
+	} else {
+		reply.Value = ""
+	}
+	// fmt.Println("Get, value = ", reply.Value)
 	
 
 }
@@ -97,9 +110,24 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 		clientId = kv.NewClient(args.TransactionId)
 	}
 	if args.TransactionId == (kv.AckTime[clientId].AckID) {
-		kv.AckTime[clientId].AckID = 1 + kv.AckTime[clientId].AckID
-		kv.AckTime[clientId].UpdateTime = time.Now()
 
+		kv.AckTime[clientId].AckID = 1 + kv.AckTime[clientId].AckID
+
+		// kv.KeyValue[args.Key] = args.Value
+
+		kv.AckTime[clientId].KeyBuffer = args.Key
+		kv.AckTime[clientId].ValueBuffer = kv.KeyValue[args.Key]
+		kv.KeyValue[args.Key] = args.Value
+		// actually do put
+	} else {
+		kv.FlushBuffer(clientId)
+		value, ok = kv.KeyValue[args.Key]
+		if ok {
+			reply.Value = value
+		} else {
+			reply.Value = ""
+			value = ""
+		}
 		kv.KeyValue[args.Key] = args.Value
 		// actually do put
 	}
@@ -134,9 +162,22 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	if args.TransactionId == (kv.AckTime[clientId].AckID) {
 		// fmt.Println("Append, id++ = ", kv.AckTime[clientId].AckID)
 		kv.AckTime[clientId].AckID = 1 + kv.AckTime[clientId].AckID
-		kv.AckTime[clientId].UpdateTime = time.Now()
 
-		kv.KeyValue[args.Key] = value + args.Value
+		kv.AckTime[clientId].KeyBuffer = args.Key
+		kv.AckTime[clientId].ValueBuffer = kv.KeyValue[args.Key]
+
+		kv.KeyValue[args.Key] = kv.KeyValue[args.Key] + args.Value
+		// actually do append
+	} else {
+		kv.FlushBuffer(clientId)
+		value, ok = kv.KeyValue[args.Key]
+		if ok {
+			reply.Value = value
+		} else {
+			reply.Value = ""
+			value = ""
+		}
+		kv.KeyValue[args.Key] = kv.KeyValue[args.Key] + args.Value
 		// actually do append
 	}
 	reply.ClientId = clientId

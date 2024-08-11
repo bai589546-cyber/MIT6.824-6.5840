@@ -51,10 +51,11 @@ func (ck *Clerk) Get(key string) string {
 				// update ClientId at first query round
 			}
 			if ck.TransactionId == (reply.AckId - 1) {
-				ck.TransactionId += 1
+				ck.TransactionId = reply.AckId
 				// ack
+				return reply.Value
 			}
-			return reply.Value
+			
 		}
 	}
 	return ""
@@ -87,8 +88,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 			if ck.TransactionId == (reply.AckId - 1) {
 				ck.TransactionId = reply.AckId
 				// ack
+				return reply.Value
 			}
-			return reply.Value
+			
 		}
 	}
 	
