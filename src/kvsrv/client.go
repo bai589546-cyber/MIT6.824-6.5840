@@ -1,15 +1,17 @@
 package kvsrv
 
-import "6.5840/labrpc"
-import "crypto/rand"
-import "math/big"
+import (
+	"crypto/rand"
+	"math/big"
 
+	"6.5840/labrpc"
+)
 
 type Clerk struct {
 	server *labrpc.ClientEnd
 	// You will have to modify this struct.
-	ClientId 		int
-	TransactionId 	int64
+	ClientId      int
+	TransactionId int
 }
 
 func nrand() int64 {
@@ -24,7 +26,7 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck.server = server
 	// You'll have to add code here.
 	ck.ClientId = -1
-	ck.TransactionId = nrand()
+	ck.TransactionId = 0
 	return ck
 }
 
@@ -43,19 +45,10 @@ func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 	args := GetArgs{key, ck.ClientId, ck.TransactionId}
 	reply := GetReply{}
-	for ;; {
+	for {
 		ok := ck.server.Call("KVServer.Get", &args, &reply)
 		if ok {
-			if ck.ClientId == -1 {
-				ck.ClientId = reply.ClientId
-				// update ClientId at first query round
-			}
-			if ck.TransactionId == (reply.AckId - 1) {
-				ck.TransactionId = reply.AckId
-				// ack
-				return reply.Value
-			}
-			
+			return reply.Value
 		}
 	}
 	return ""
@@ -74,15 +67,17 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	var put_or_append PutAppendType = Puttype
 	if op == "Append" {
 		put_or_append = Appendtype
-	} 
+	}
 	args := PutAppendArgs{key, value, put_or_append, ck.ClientId, ck.TransactionId}
 	reply := PutAppendReply{}
-	for ;; {
+	for {
 		ok := ck.server.Call("KVServer."+op, &args, &reply)
 
 		if ok {
 			if ck.ClientId == -1 {
 				ck.ClientId = reply.ClientId
+				args.ClientId = ck.ClientId
+				continue
 				// update ClientId at first query round
 			}
 			if ck.TransactionId == (reply.AckId - 1) {
@@ -90,10 +85,10 @@ func (ck *Clerk) PutAppend(key string, value string, op string) string {
 				// ack
 				return reply.Value
 			}
-			
+
 		}
 	}
-	
+
 	return ""
 }
 
