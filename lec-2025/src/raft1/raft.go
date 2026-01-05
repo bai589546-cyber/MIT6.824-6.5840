@@ -13,12 +13,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 	"6.5840/raftapi"
 	"6.5840/tester1"
-	// "fmt"
+	"fmt"
 	"slices"
+	"bytes"
 )
 
 // A Go object that represents log entry for raft state machine
@@ -94,12 +95,13 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	writeBuffer := new(bytes.Buffer)
+	encoder := labgob.NewEncoder(writeBuffer)
+	encoder.Encode(rf.currentTerm)
+	encoder.Encode(rf.votedFor)
+	encoder.Encode(rf.logs)
+	raftstate := writeBuffer.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 
@@ -110,17 +112,27 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (3C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+
+	// 1. create io.reader buffer
+	r := bytes.NewBuffer(data)
+	// 2. create decoder
+	d := labgob.NewDecoder(r)
+	// 3. prepare variable to receive data
+	var currentTerm int
+	var votedFor 	int
+	var logs		[]Entry
+
+	// 4. decode
+	// decode order must match with encode order
+	if d.Decode(&currentTerm) != nil ||
+	   d.Decode(&votedFor) != nil ||
+	   d.Decode(&logs) != nil {
+	  fmt.Printf("Error: Raft server %d failed to read persist data\n", rf.me)
+	} else {
+	  rf.currentTerm = currentTerm
+	  rf.votedFor = votedFor
+	  rf.logs = logs
+	}
 }
 
 // how many bytes in Raft's persisted log?
@@ -172,7 +184,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 	} else {
 		if args.Term > rf.currentTerm {
+			
 			rf.votedFor = -1 			// 连续 election 发生，需要清除上个 term 留下来的 vote
+			rf.currentTerm = args.Term
+			rf.state = Follower
+			rf.persist()
 		}
 
 		if rf.votedFor == args.CandidateId || rf.votedFor == -1 {
@@ -184,8 +200,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			if voteFlag {
 				reply.VoteGranted = true
 				rf.votedFor = args.CandidateId
+
+				
 				rf.currentTerm = args.Term
 				rf.state = Follower
+				rf.persist()
 				
 				// 【关键修复】：既然投了票，就承认了对方的地位，必须重置自己的选举定时器！
 				// 否则你刚投完票，马上自己超时，又去拆台。
@@ -236,18 +255,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// 3. if received legal message from Leader
 	if args.Term >= rf.currentTerm {
+		
 		rf.currentTerm = args.Term
 		rf.state = Follower
+
+		
 		rf.votedFor = -1 			// 3A when convert to Follower, clear vote history
-
-
+		rf.persist()
 		select {
 		case rf.heartbeatCh <- true:
 		default:
 		}
 		
 		if args.PrevLogIndex == len(rf.logs) - 1 && args.PrevLogTerm == rf.logs[len(rf.logs) - 1].Term {
+			
 			rf.logs = append(rf.logs, args.Entries...)
+			rf.persist()
 			reply.Success = true
 
 			indexOfLastNewEntry := args.PrevLogIndex + len(args.Entries)
@@ -270,15 +293,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					
 					if insertIndex >= len(rf.logs) {
 						// 本地日志到头了，直接把剩余的追加上去
+						
 						rf.logs = append(rf.logs, args.Entries[entriesIndex:]...)
+						rf.persist()
 						break
 					}
 
 					// 比较重叠部分的 Term
 					if rf.logs[insertIndex].Term != args.Entries[entriesIndex].Term {
 						// 发现冲突！截断本地日志，并追加剩余所有
+						
 						rf.logs = rf.logs[:insertIndex]
 						rf.logs = append(rf.logs, args.Entries[entriesIndex:]...)
+						rf.persist()
 						break
 					}
 
@@ -360,8 +387,12 @@ func (rf *Raft) StartElection() {
 	rf.mu.Lock()
 
 	rf.state = Candidate
+	
 	rf.currentTerm = rf.currentTerm + 1
+
+	
 	rf.votedFor = rf.me
+	rf.persist()
 
 	currentTerm := rf.currentTerm
 	votes := 1
@@ -396,9 +427,14 @@ func (rf *Raft) StartElection() {
 				}
 
 				if reply.Term > rf.currentTerm {
+					
 					rf.currentTerm = reply.Term
 					rf.state = Follower
+
+					
 					rf.votedFor = -1
+					rf.persist()
+					
 					rf.mu.Unlock()
 					return
 				}
@@ -426,7 +462,7 @@ func (rf *Raft) StartElection() {
 						rf.matchIndex[rf.me] = currentLen - 1
 
 						rf.mu.Unlock()
-						rf.BroadcastHeartbeat()
+						rf.BroadcastAppendEntries()
 						return
 					}
 				}
@@ -463,7 +499,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	if isLeader {
 		index = len(rf.logs)
+		
 		rf.logs = append(rf.logs, Entry{rf.currentTerm, command})
+		rf.persist()
 		rf.matchIndex[rf.me]++
 		select {
 		case rf.startCh <- true:
@@ -541,11 +579,19 @@ func (rf *Raft) getRandomTimeout() time.Duration {
 
 func (rf *Raft) handleAppendEntriesReply(server int, args AppendEntriesArgs, reply AppendEntriesReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
 		rf.currentTerm = reply.Term 		// <--- MUST update Term
 		rf.state = Follower
+		
 		rf.votedFor = -1 					// <--- when a leader becomes a follower, vote must be cleared
+		rf.persist()
+		return
 	}
+
+	if args.PrevLogIndex != rf.nextIndex[server] - 1 {
+        return
+    }
 
 	// 3B, deal with the case caused by log inconsistency
 	if reply.Success {
@@ -553,47 +599,19 @@ func (rf *Raft) handleAppendEntriesReply(server int, args AppendEntriesArgs, rep
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 
 	} else {
-		rf.nextIndex[server] = reply.ConflictLogIndex
+		if reply.ConflictLogIndex > 0 {
+            // 只有当回退位置比当前 nextIndex 小时才更新，防止回退到比 matchIndex 还小
+            if reply.ConflictLogIndex < rf.nextIndex[server] {
+                 rf.nextIndex[server] = reply.ConflictLogIndex
+            }
+        } else {
+             rf.nextIndex[server] = 1
+        }
 	}
 
-	defer rf.mu.Unlock()
+	
 }
 
-func (rf *Raft) BroadcastHeartbeat() {
-	// fmt.Println("BroadcastHearBeat Begin ...")
-    rf.mu.Lock()
-    if rf.state != Leader {
-        rf.mu.Unlock()
-        return
-    }
-    // 记得在不需要锁的时候（比如发 RPC 前）解锁，
-    // 或者拷贝一份 peers 列表在锁外遍历
-    rf.mu.Unlock() // 解锁
-
-
-	for i := range rf.peers {
-        if i == rf.me { continue }
-    
-        // 启动 Goroutine 发送 (核心：不阻塞 ticker)
-        go func(server int) {
-			// 构造 AppendEntriesArgs (深拷贝)
-			rf.mu.Lock()
-			args := AppendEntriesArgs{
-				rf.currentTerm,
-				rf.me,
-				rf.nextIndex[server] - 1,
-				rf.logs[rf.nextIndex[server] - 1].Term,
-				rf.commitIndex,
-				nil,
-			}
-			rf.mu.Unlock()
-            reply := AppendEntriesReply{}
-            if rf.sendAppendEntries(server, &args, &reply) {
-                rf.handleAppendEntriesReply(server, args, reply)
-            }
-        }(i)
-    }
-}
 
 func (rf *Raft) Commit() {
 	rf.mu.Lock()
@@ -629,6 +647,16 @@ func (rf *Raft) BroadcastAppendEntries() {
 		
         go func(server int) {
 			rf.mu.Lock()
+            // 1. 二次检查 Leader 状态
+            if rf.state != Leader {
+                rf.mu.Unlock()
+                return
+            }
+			// 2. 防御性重置，防止 Panic
+            if rf.nextIndex[server] <= 0 {
+                rf.nextIndex[server] = 1
+            }
+
 			args := AppendEntriesArgs{}
 			args.Term = rf.currentTerm
 			args.LeaderId = rf.me
@@ -681,7 +709,7 @@ func (rf *Raft) leaderTicker() {
 			rf.BroadcastAppendEntries()
 		case <-timer.C:
 			rf.Commit()
-			rf.BroadcastHeartbeat()
+			rf.BroadcastAppendEntries()
 		}
 	}
 }
@@ -753,10 +781,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	}
 	rf.logs = append(rf.logs, Entry{0, nil})
 
-	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
 	rf.heartbeatCh = make(chan bool, 1)
 	rf.startCh = make(chan bool, 1)
+
+	// initialize from state persisted before a crash
+	rf.readPersist(persister.ReadRaftState())
+	
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
