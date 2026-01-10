@@ -2,7 +2,8 @@ package rsm
 
 import (
 	"sync"
-
+	"time"
+	"fmt"
 	"6.5840/kvsrv1/rpc"
 	"6.5840/labrpc"
 	"6.5840/raft1"
@@ -18,6 +19,9 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Me 		int
+	Id 		int
+	Req 	any
 }
 
 
@@ -33,6 +37,8 @@ type StateMachine interface {
 	Restore([]byte)
 }
 
+
+
 type RSM struct {
 	mu           sync.Mutex
 	me           int
@@ -41,7 +47,50 @@ type RSM struct {
 	maxraftstate int // snapshot if log grows this big
 	sm           StateMachine
 	// Your definitions here.
+
+	waitChs 	 map[int]chan Result
 }
+
+type Result struct {
+	Index 		int
+	Term 		int
+	Value 		any
+}
+
+func (rsm *RSM) reader() {
+	for {
+		select {
+		case msg := <- rsm.applyCh:
+			if msg.CommandValid {
+				// msg.Command is not Req only! msg.Command = Op{...}, apart from Req, it also includes extra information to avoid repeatation
+				op, ok := msg.Command.(Op)
+				var returnValue any
+				if ok {
+					returnValue = rsm.sm.DoOp(op.Req)
+				}
+				rsm.mu.Lock()
+				waitCh, ok := rsm.waitChs[msg.CommandIndex]
+
+				result := Result{
+					Index: 		msg.CommandIndex,
+					Term:		msg.CommandTerm,
+					Value:		returnValue,
+				}
+				if ok {
+					select {
+					case waitCh <- result:
+					default:
+					}
+					
+				}
+				rsm.mu.Unlock()
+			} else if msg.SnapshotValid {
+
+			}
+		}
+	}
+}
+
 
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
@@ -64,10 +113,13 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		maxraftstate: maxraftstate,
 		applyCh:      make(chan raftapi.ApplyMsg),
 		sm:           sm,
+		waitChs:      make(map[int]chan Result), // <--- 【修复】必须初始化
 	}
 	if !useRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
 	}
+
+	go rsm.reader()
 	return rsm
 }
 
@@ -85,6 +137,49 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 	// for example: op := Op{Me: rsm.me, Id: id, Req: req}, where req
 	// is the argument to Submit and id is a unique id for the op.
 
-	// your code here
-	return rpc.ErrWrongLeader, nil // i'm dead, try another server.
+	// 1. call raft.Start()
+	op := Op{
+		Me:		rsm.me,
+		Id:		0,
+		Req:	req,
+	}
+
+	index, term, isLeader := rsm.rf.Start(op)
+
+	if isLeader == false {
+		// not the leader
+		return rpc.ErrWrongLeader, nil // i'm dead, try another server.
+	} 
+
+	// 2. create a wait channel (one-shot channel)
+	ch := make(chan Result, 1)
+
+	// 3. register the wait channel to waitChs map
+	rsm.mu.Lock()
+	rsm.waitChs[index] = ch
+	rsm.mu.Unlock()
+
+	// 4. wait until receive msg from ch
+
+	defer func() {
+        rsm.mu.Lock()
+        delete(rsm.waitChs, index)
+        rsm.mu.Unlock()
+    }()
+
+	select {
+	case result := <- ch:
+		// 5. check whether the leader of raft has changed -> which means the index may be out of date
+		// must check the "index == Result.Index"
+		if result.Index == index && result.Term == term {
+			return rpc.OK, result.Value
+		}
+		// fmt.Println("escape!")
+		return rpc.ErrWrongLeader, nil
+	case <-time.After(2000 * time.Millisecond):
+        // 超时机制：防止 Raft 丢消息导致死等
+		// fmt.Println("timeout")
+        return rpc.ErrWrongLeader, nil
+	}
+
 }

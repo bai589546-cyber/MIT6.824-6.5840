@@ -32,6 +32,9 @@ type ApplyMsg struct {
 	Command      interface{}
 	CommandIndex int
 
+	// necessary for lab4
+	CommandTerm  int
+
 	SnapshotValid bool
 	Snapshot      []byte
 	SnapshotTerm  int

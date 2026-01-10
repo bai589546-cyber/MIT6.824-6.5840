@@ -986,6 +986,7 @@ func (rf *Raft) applier() {
                 CommandValid: true,
                 Command:      entry.Command,
                 CommandIndex: rf.lastApplied,
+				CommandTerm:  rf.getLogTerm(rf.lastApplied),
             }
             
             rf.mu.Unlock()
