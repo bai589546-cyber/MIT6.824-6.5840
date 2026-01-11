@@ -60,6 +60,7 @@ type Raft struct {
 	lastApplied	int 				// index of highest log entry applied to state machine (initialized to 0, increases monotonically) (not used in 3B)
 	// 3B: 需要保存 applyCh
     applyCh   chan raftapi.ApplyMsg
+	applySignal chan struct{}
 
 	// state for Leader, reinitialized after election)
 	nextIndex	[]int 				// for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
@@ -860,7 +861,19 @@ func (rf *Raft) commit() {
 
 	if newMatchIndex[targetIndex] > rf.commitIndex  && rf.getLogTerm(newMatchIndex[targetIndex]) == rf.currentTerm{
 		rf.commitIndex = newMatchIndex[targetIndex]
+		rf.notifyApplier()
 	} 
+}
+
+// 这是一个非阻塞发送，用来替代 cond.Broadcast()
+func (rf *Raft) notifyApplier() {
+    select {
+    case rf.applySignal <- struct{}{}:
+        // 成功把信号塞进去了
+    default:
+        // 通道满了（说明 applier 还没消费之前的信号，或者正在运行），
+        // 那就什么都不用做，因为它醒来后会检查所有最新的 commitIndex
+    }
 }
 
 func (rf *Raft) BroadcastAppendEntries() {
@@ -995,9 +1008,11 @@ func (rf *Raft) applier() {
             rf.applyCh <- msg 
         } else {
             rf.mu.Unlock()
-            // 如果没有新日志，稍微睡一会，避免 CPU 空转
-            // (更高级的写法是用 sync.Cond，但在 Lab 中 10ms sleep 足够了)
-            time.Sleep(10 * time.Millisecond)
+            // 【关键】使用 select 等待信号
+            select {
+            case <-rf.applySignal:
+                // 收到信号了！回到循环顶部，加锁检查 commitIndex
+            }
         }
     }
 }
@@ -1052,6 +1067,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	rf.commitIndex = rf.lastIncludedIndex
 	rf.lastApplied = rf.lastIncludedIndex
+
+	// 【关键】必须给 1 个缓冲！
+    // 这样如果 applier 正在忙，Leader 发信号时不会被阻塞，而是直接丢弃（反正 applier 忙完下一轮会自己检查）
+    rf.applySignal = make(chan struct{}, 1)
 	
 
 	// start ticker goroutine to start elections
