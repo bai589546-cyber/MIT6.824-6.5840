@@ -2,7 +2,9 @@ package kvraft
 
 import (
 	"sync/atomic"
-
+	"sync"
+	"log"
+	// "fmt"
 	"6.5840/kvraft1/rsm"
 	"6.5840/kvsrv1/rpc"
 	"6.5840/labgob"
@@ -17,6 +19,13 @@ type KVServer struct {
 	rsm  *rsm.RSM
 
 	// Your definitions here.
+	mu           	sync.Mutex
+	KeyValue 		map[string]ValueEntry
+}
+
+type ValueEntry struct {
+	Value 		string
+	Version 	rpc.Tversion
 }
 
 // To type-cast req to the right type, take a look at Go's type switches or type
@@ -26,6 +35,90 @@ type KVServer struct {
 // https://go.dev/tour/methods/15
 func (kv *KVServer) DoOp(req any) any {
 	// Your code here
+
+	switch req.(type) {
+	case *rpc.GetArgs:
+		getreq := req.(*rpc.GetArgs)
+		getReply := rpc.GetReply{}
+		kv.mu.Lock()
+		entry, ok := kv.KeyValue[getreq.Key]
+		kv.mu.Unlock()
+		if !ok {
+			getReply.Err = rpc.ErrNoKey
+		} else if ok {
+			getReply.Value = entry.Value
+			getReply.Version = entry.Version
+			getReply.Err = rpc.OK
+		}
+		return getReply
+	case *rpc.PutArgs:
+		putreq := req.(*rpc.PutArgs)
+		putReply := rpc.PutReply{}
+		kv.mu.Lock()
+		entry, ok := kv.KeyValue[putreq.Key]
+		
+		if !ok {
+			if putreq.Version == 0 {
+				// put 对应的 key 为空，需要 version == 0 才能创建
+				kv.KeyValue[putreq.Key] = ValueEntry{putreq.Value, 1}
+				putReply.Err = rpc.OK
+			} else {
+				putReply.Err = rpc.ErrVersion
+			}
+			
+		} else if ok {
+			if putreq.Version != entry.Version {
+				putReply.Err = rpc.ErrVersion
+			} else {
+				kv.KeyValue[putreq.Key] = ValueEntry{putreq.Value, entry.Version + 1}
+				putReply.Err = rpc.OK
+			}
+		}
+		kv.mu.Unlock()
+		return putReply
+	case rpc.GetArgs:
+		getreq := req.(rpc.GetArgs)
+		getReply := rpc.GetReply{}
+		kv.mu.Lock()
+		entry, ok := kv.KeyValue[getreq.Key]
+		kv.mu.Unlock()
+		if !ok {
+			getReply.Err = rpc.ErrNoKey
+		} else if ok {
+			getReply.Value = entry.Value
+			getReply.Version = entry.Version
+			getReply.Err = rpc.OK
+		}
+		return getReply
+	case rpc.PutArgs:
+		putreq := req.(rpc.PutArgs)
+		putReply := rpc.PutReply{}
+		kv.mu.Lock()
+		entry, ok := kv.KeyValue[putreq.Key]
+		
+		if !ok {
+			if putreq.Version == 0 {
+				// put 对应的 key 为空，需要 version == 0 才能创建
+				kv.KeyValue[putreq.Key] = ValueEntry{putreq.Value, 1}
+				putReply.Err = rpc.OK
+			} else {
+				putReply.Err = rpc.ErrVersion
+			}
+			
+		} else if ok {
+			if putreq.Version != entry.Version {
+				putReply.Err = rpc.ErrVersion
+			} else {
+				kv.KeyValue[putreq.Key] = ValueEntry{putreq.Value, entry.Version + 1}
+				putReply.Err = rpc.OK
+			}
+		}
+		kv.mu.Unlock()
+		return putReply
+	default:
+		// wrong type! expecting an Inc.
+		log.Fatalf("DoOp cannot handle the REQUEST %T", req)
+	}
 	return nil
 }
 
@@ -42,12 +135,35 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 	// Your code here. Use kv.rsm.Submit() to submit args
 	// You can use go's type casts to turn the any return value
 	// of Submit() into a GetReply: rep.(rpc.GetReply)
+
+	// fmt.Println("me = ", kv.me, "Get Request, key =", args.Key)
+
+	err, getValue := kv.rsm.Submit(args)
+	reply.Err = err
+
+	getResult, ok := getValue.(rpc.GetReply)
+	if err == rpc.OK && ok{
+		reply.Value = getResult.Value
+		reply.Version = getResult.Version
+		reply.Err = getResult.Err
+	}
+
 }
 
 func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 	// Your code here. Use kv.rsm.Submit() to submit args
 	// You can use go's type casts to turn the any return value
 	// of Submit() into a PutReply: rep.(rpc.PutReply)
+
+	// fmt.Println("me = ", kv.me, "Put Request, key =", args.Key, "value =", args.Value)
+
+	err, putValue := kv.rsm.Submit(args)
+	reply.Err = err
+
+	putResult, ok := putValue.(rpc.PutReply)
+	if err == rpc.OK && ok{
+		reply.Err = putResult.Err
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -82,5 +198,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persist
 
 	kv.rsm = rsm.MakeRSM(servers, me, persister, maxraftstate, kv)
 	// You may need initialization code here.
+	kv.dead = 0
+	kv.KeyValue = make(map[string]ValueEntry)
+
+
 	return []tester.IService{kv, kv.rsm.Raft()}
 }

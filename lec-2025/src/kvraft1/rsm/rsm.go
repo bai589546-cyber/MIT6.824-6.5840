@@ -3,7 +3,7 @@ package rsm
 import (
 	"sync"
 	"time"
-	"fmt"
+	// "fmt"
 	"6.5840/kvsrv1/rpc"
 	"6.5840/labrpc"
 	"6.5840/raft1"
@@ -148,6 +148,7 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 
 	if isLeader == false {
 		// not the leader
+		// fmt.Println("I am not the leader!")
 		return rpc.ErrWrongLeader, nil // i'm dead, try another server.
 	} 
 

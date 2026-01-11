@@ -659,6 +659,7 @@ func (rf *Raft) StartElection() {
 							return
 						}
 						electedFlag = true
+						// fmt.Println("server ", rf.me, "wins the vote")
 						muFlag.Unlock()
 
 						
@@ -807,7 +808,7 @@ func (rf *Raft) handleAppendEntriesReply(server int, args AppendEntriesArgs, rep
 	if reply.Success {
 		rf.nextIndex[server] = args.PrevLogIndex + len(args.Entries) + 1
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
-
+		rf.commit()
 	} else {
 		if reply.ConflictLogIndex > 0 {
             // 只有当回退位置比当前 nextIndex 小时才更新，防止回退到比 matchIndex 还小
@@ -841,9 +842,9 @@ func (rf *Raft) handleInstallSnapshotReply(server int, args InstallSnapshotArgs,
 	rf.mu.Unlock()
 }
 
-func (rf *Raft) Commit() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+func (rf *Raft) commit() {
+	// rf.mu.Lock()
+	// defer rf.mu.Unlock()		lab 4B,因为commit的位置变了，不需要加锁了
 
 	if rf.state != Leader {
 		return
@@ -960,7 +961,7 @@ func (rf *Raft) leaderTicker() {
 			}
 			rf.BroadcastAppendEntries()
 		case <-timer.C:
-			rf.Commit()
+			// rf.Commit()	lab 4B: 不要等到心跳更新再 commit！而是一旦有 appendentry 成功，就立刻 commit！
 			rf.BroadcastAppendEntries()
 		}
 	}
