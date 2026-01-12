@@ -222,7 +222,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 	raftState := rf.encodeState()
 	rf.persister.Save(raftState, snapshot)
-	// fmt.Println("now S", rf.me, "receive snapshot, snapshot size = ", rf.persister.SnapshotSize(), "state size = ", rf.persister.RaftStateSize())
+	// fmt.Println("now S", rf.me, "receive Snapshot(), snapshot size = ", rf.persister.SnapshotSize(), "state size = ", rf.persister.RaftStateSize())
 }
 
 func (rf *Raft) getFirstLogIndex() int {
@@ -378,6 +378,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			} else {
 				rf.commitIndex = indexOfLastNewEntry
 			}
+			rf.notifyApplier()	// lab 4C 大坑，因为之前在 lab 4B 中，把 applier 从轮询改成了信号触发，所以需要考虑所有信号需要被触发的情况
+								// 情况 1：本身就是 leader，leader 在完成了 broadcast appendentries 之后，需要检查 commit 的 entry 是否比 lastapplied 多
+								// 情况 2：本身不是 leader，但是作为 follower，收到了来自 leader 的同步请求。同步之后，自身的 commit index 也可能增加，也会需要检查是否比 lastapplied 多
+			// fmt.Println("raft ", rf.me, "commitIndex = ", rf.commitIndex, "lastApplied = ", rf.lastApplied)
 		} else if args.PrevLogIndex <= rf.getLastLogIndex() && args.PrevLogIndex >= rf.getFirstLogIndex() {
 			if  args.PrevLogTerm == rf.getLogTerm(args.PrevLogIndex) {
 				insertIndex := args.PrevLogIndex + 1
@@ -420,6 +424,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				} else {
 					rf.commitIndex = indexOfLastNewEntry
 				}
+				rf.notifyApplier()
+				// fmt.Println("raft ", rf.me, "commitIndex = ", rf.commitIndex, "lastApplied = ", rf.lastApplied)
 			} else {
 				reply.ConflictLogTerm = rf.getLogTerm(args.PrevLogIndex)
 				// if ConflictLogTerm == -1, that means arg.PrevLogIndex < first log index, that means either leader has problem, or this follower needs to install snapshot from leader 
@@ -489,7 +495,8 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
     }
 
 	// --- 核心逻辑：6 和 7 ---
-    
+    // fmt.Println("now S", rf.me, "receive InstallSnapshot(), snapshot size = ", len(args.Data))
+
     hasEntry := false
     // 检查本地 log 是否包含 snapshot 的 last index 和 term
     // 注意：这里需要根据你的 log 实现做 index 转换
@@ -908,9 +915,23 @@ func (rf *Raft) BroadcastAppendEntries() {
 				args.PrevLogTerm = rf.getLogTerm(rf.nextIndex[server] - 1)
 				args.LeaderCommit = rf.commitIndex
 				
-				for j := rf.nextIndex[server]; j < rf.getLastLogIndex() + 1; j++ {
-					args.Entries = append(args.Entries, rf.logs[j - rf.lastIncludedIndex])
-				}
+				// 【关键修复】分批发送，避免一次锁太久
+                // 建议 batchSize 设置为 100~500 之间
+                batchSize := 200 
+                lastLogIndex := rf.getLastLogIndex()
+                
+                // 收集日志
+                endIndex := rf.nextIndex[server] + batchSize
+                if endIndex > lastLogIndex + 1 {
+                    endIndex = lastLogIndex + 1
+                }
+                
+                // 预分配 slice 容量，减少内存分配开销
+                args.Entries = make([]Entry, 0, endIndex - rf.nextIndex[server])
+                
+                for j := rf.nextIndex[server]; j < endIndex; j++ {
+                    args.Entries = append(args.Entries, rf.logs[j - rf.lastIncludedIndex])
+                }
 
 				rf.mu.Unlock()
 
@@ -981,10 +1002,13 @@ func (rf *Raft) leaderTicker() {
 }
 
 func (rf *Raft) applier() {
+	defer close(rf.applyCh)
+
 	for !rf.killed() {
         rf.mu.Lock()
         // 如果 commitIndex 更新了，且比 lastApplied 大
         if rf.commitIndex > rf.lastApplied {
+			// fmt.Println("raft ", rf.me, "try to apply, lastApplied = ", rf.lastApplied)
             rf.lastApplied++
             // 获取要应用的那条日志
             // 注意：你的 logs 有 dummy head，所以 index 直接对应 logs 下标

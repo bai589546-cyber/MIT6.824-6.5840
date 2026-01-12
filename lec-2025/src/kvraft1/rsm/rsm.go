@@ -58,37 +58,45 @@ type Result struct {
 }
 
 func (rsm *RSM) reader() {
-	for {
-		select {
-		case msg := <- rsm.applyCh:
-			if msg.CommandValid {
-				// msg.Command is not Req only! msg.Command = Op{...}, apart from Req, it also includes extra information to avoid repeatation
-				op, ok := msg.Command.(Op)
-				var returnValue any
-				if ok {
-					returnValue = rsm.sm.DoOp(op.Req)
-				}
-				rsm.mu.Lock()
-				waitCh, ok := rsm.waitChs[msg.CommandIndex]
+	// 【关键修复】使用 range，当 applyCh 关闭时自动退出循环
+    for msg := range rsm.applyCh {
+        if msg.CommandValid {
+            op, ok := msg.Command.(Op)
+            if !ok { continue }
+            
+            // 1. 执行
+            returnValue := rsm.sm.DoOp(op.Req)
 
-				result := Result{
-					Index: 		msg.CommandIndex,
-					Term:		msg.CommandTerm,
-					Value:		returnValue,
-				}
-				if ok {
-					select {
-					case waitCh <- result:
-					default:
-					}
-					
-				}
-				rsm.mu.Unlock()
-			} else if msg.SnapshotValid {
+            // 2. 尝试快照
+            rsm.trySnapShot(msg.CommandIndex)
 
-			}
-		}
-	}
+            // 3. 通知等待者
+            rsm.mu.Lock()
+            if waitCh, ok := rsm.waitChs[msg.CommandIndex]; ok {
+                result := Result{
+                    Index: msg.CommandIndex,
+                    Term:  msg.CommandTerm,
+                    Value: returnValue,
+                }
+                select {
+                case waitCh <- result:
+                default:
+                }
+            }
+            rsm.mu.Unlock()
+
+        } else if msg.SnapshotValid {
+            // fmt.Println("rsm restore", rsm.me)
+            rsm.sm.Restore(msg.Snapshot)
+        }
+    }
+
+    // 循环退出说明 System Shutdown，清理善后
+    rsm.mu.Lock()
+    defer rsm.mu.Unlock()
+    for _, ch := range rsm.waitChs {
+        close(ch)
+    }
 }
 
 
@@ -115,6 +123,12 @@ func MakeRSM(servers []*labrpc.ClientEnd, me int, persister *tester.Persister, m
 		sm:           sm,
 		waitChs:      make(map[int]chan Result), // <--- 【修复】必须初始化
 	}
+
+	// fmt.Println("rsm", rsm.me, "start...")
+	if persister.SnapshotSize() > 0 {
+        sm.Restore(persister.ReadSnapshot())
+    }
+
 	if !useRaftStateMachine {
 		rsm.rf = raft.Make(servers, me, persister, rsm.applyCh)
 	}
@@ -127,6 +141,20 @@ func (rsm *RSM) Raft() raftapi.Raft {
 	return rsm.rf
 }
 
+
+func (rsm *RSM) trySnapShot(index int) {
+	if (rsm.maxraftstate == -1) {
+		return
+	}
+	// fmt.Println("rsm", rsm.me, "try snapshot, rsm.rf.PersistBytes() = ", rsm.rf.PersistBytes())
+	if (rsm.maxraftstate < rsm.rf.PersistBytes()) {
+		// persist
+		// fmt.Println("rsm", rsm.me, "must snapshot, rsm.rf.PersistBytes() = ", rsm.rf.PersistBytes())
+		buffer := rsm.sm.Snapshot()
+		rsm.rf.Snapshot(index, buffer)
+	}
+	return
+}
 
 // Submit a command to Raft, and wait for it to be committed.  It
 // should return ErrWrongLeader if client should find new leader and
@@ -143,7 +171,7 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 		Id:		0,
 		Req:	req,
 	}
-
+	// fmt.Println("rsm", rsm.me, "submit", op)
 	index, term, isLeader := rsm.rf.Start(op)
 
 	if isLeader == false {

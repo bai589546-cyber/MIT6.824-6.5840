@@ -11,6 +11,8 @@ import (
 	"6.5840/labrpc"
 	"6.5840/tester1"
 
+	"bytes"
+
 )
 
 type KVServer struct {
@@ -124,11 +126,44 @@ func (kv *KVServer) DoOp(req any) any {
 
 func (kv *KVServer) Snapshot() []byte {
 	// Your code here
-	return nil
+	kv.mu.Lock() // 加锁
+    defer kv.mu.Unlock()
+
+	writeBuffer := new(bytes.Buffer)
+	encoder := labgob.NewEncoder(writeBuffer)
+
+	// 编码错误检查是好习惯，虽然 labgob panic 也会被此时捕获
+    if err := encoder.Encode(kv.KeyValue); err != nil {
+        log.Fatalf("Snapshot encode error: %v", err)
+    }
+	kvSnapshot := writeBuffer.Bytes()
+	// fmt.Println("kvserver", kv.me, "snapshot size = ", len(kvSnapshot))
+	return kvSnapshot
 }
 
 func (kv *KVServer) Restore(data []byte) {
 	// Your code here
+	if data == nil || len(data) < 1 {
+		return
+	}
+
+	// 1. create io.reader buffer
+	r := bytes.NewBuffer(data)
+	// 2. create decoder
+	d := labgob.NewDecoder(r)
+	// 3. prepare variable to receive data
+    var kvBuffer 	map[string]ValueEntry
+
+	kv.mu.Lock()
+	// 4. decode
+	// decode order must match with encode order
+	if d.Decode(&kvBuffer) != nil {		// 新增
+	  log.Printf("Error: KV server %d failed to RESTORE\n", kv.me)
+	} else {
+		kv.KeyValue = kvBuffer
+	}
+
+	kv.mu.Unlock()
 }
 
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
@@ -199,7 +234,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persist
 	kv.rsm = rsm.MakeRSM(servers, me, persister, maxraftstate, kv)
 	// You may need initialization code here.
 	kv.dead = 0
-	kv.KeyValue = make(map[string]ValueEntry)
+	if kv.KeyValue == nil {
+        kv.KeyValue = make(map[string]ValueEntry)
+    }
 
 
 	return []tester.IService{kv, kv.rsm.Raft()}

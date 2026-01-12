@@ -5,6 +5,8 @@ import (
 	"6.5840/kvtest1"
 	"6.5840/tester1"
 	"time"
+
+	// "fmt"
 )
 
 
@@ -38,12 +40,13 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 	args := rpc.GetArgs{
 		key,
 	}
-	reply := rpc.GetReply{}
+	
 	i := ck.lastLeader
 	if i == -1 {
 		i = 0
 	}
 	for {
+		reply := rpc.GetReply{}
 		ok := ck.clnt.Call(ck.servers[i], "KVServer.Get", &args, &reply)
 		if ok && reply.Err != rpc.ErrWrongLeader{
 			ck.lastLeader = i
@@ -54,7 +57,7 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 			time.Sleep(50 * time.Millisecond) // 不是 Leader 就睡一会
 		}
 	}
-	return reply.Value, reply.Version, reply.Err
+	// return reply.Value, reply.Version, reply.Err
 }
 
 // Put updates key with value only if the version in the
@@ -82,7 +85,7 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 		value,
 		version,
 	}
-	reply := rpc.PutReply{}
+	
 	i := ck.lastLeader
 	if i == -1 {
 		i = 0
@@ -90,8 +93,11 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 
 	isResend := false
 	for {
+		reply := rpc.PutReply{}
 		ok := ck.clnt.Call(ck.servers[i], "KVServer.Put", &args, &reply)
 		if ok && reply.Err != rpc.ErrWrongLeader{
+			// fmt.Println("Put", args, "send to kvsrv", i)
+
 			ck.lastLeader = i
 			if isResend && reply.Err == rpc.ErrVersion {
 				reply.Err = rpc.ErrMaybe
@@ -104,5 +110,5 @@ func (ck *Clerk) Put(key string, value string, version rpc.Tversion) rpc.Err {
 			time.Sleep(50 * time.Millisecond) // 不是 Leader 就睡一会
 		}
 	}
-	return reply.Err
+	// return reply.Err
 }
