@@ -874,3 +874,683 @@ Lab 5A 的核心挑战在于：
 - **Freeze 期间拒绝操作：** 通过 ErrWrongGroup 让客户端重新查询配置
 - **幂等性检查：** 使用 maxShardNum 区分新旧请求
 - **明确的状态标记：** migratedShards 清楚标记 shard 的归属状态
+
+---
+
+# Lab 5B: Controller 容错与恢复
+
+## 实验目标
+
+Lab 5B 在 5A 的基础上增加了 controller 的容错能力：
+1. **配置变更的容错性**：当 shard group 临时宕机时，配置变更能够等待重试而不是失败
+2. **Controller 恢复机制**：当 controller 在配置变更过程中崩溃/分区时，新的 controller 能够检测并继续未完成的配置变更
+
+## 核心问题分析
+
+### 问题场景
+
+```
+时间线：
+t0: Controller 开始处理 Config 10 → Config 11 的变更
+t1: Controller 保存 Config 11 的配置信息
+t2: Controller 开始迁移 shard，但目标 group 宕机
+t3: Controller 被分区/崩溃
+t4: Shard group 恢复
+t5: 新的 Controller 启动，需要继续完成 Config 11 的变更
+```
+
+### 5A 实现的问题
+
+在 5A 中，`ChangeConfigTo` 的执行顺序是：
+```
+1. 执行所有 shard 迁移
+2. 保存新配置
+3. 更新 latest 指针
+```
+
+问题：如果 controller 在步骤 1 和 2 之间崩溃，新配置不会被保存，新的 controller 无法检测到未完成的配置变更。
+
+## 解决方案：预保存配置
+
+### 关键设计
+
+将配置保存**提前到迁移之前**：
+
+```
+1. 【新增】先保存新配置（但不更新 latest）
+2. 执行所有 shard 迁移
+3. 更新 latest 指针（标记配置变更完成）
+```
+
+**为什么这样设计有效？**
+- 新配置被保存后，即使 controller 崩溃，配置信息也不会丢失
+- `latest` 指针仍然指向旧配置，所以客户端不会使用新配置
+- 新的 controller 可以通过检测 `config-(latest+1)` 是否存在来发现未完成的配置变更
+
+### 代码实现
+
+```go
+func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
+    old := sck.Query()
+    if old == nil || old.Num >= new.Num {
+        return
+    }
+
+    // 关键：先保存新配置（但不更新 latest）
+    configStr := new.String()
+    configKey := "config-" + fmt.Sprint(new.Num)
+    sck.IKVClerk.Put(configKey, configStr, 0)
+
+    _, latestVersion, _ := sck.IKVClerk.Get("latest")
+
+    // 执行迁移
+    for shard := 0; shard < NShards; shard++ {
+        // ... 迁移逻辑 ...
+    }
+
+    // 迁移完成后更新 latest
+    sck.IKVClerk.Put("latest", fmt.Sprint(new.Num), latestVersion)
+}
+```
+
+## Controller 恢复机制
+
+### InitController 实现
+
+```go
+func (sck *ShardCtrler) InitController() {
+    // 1. 获取当前 latest 配置号
+    latestVer, _, _ := sck.IKVClerk.Get("latest")
+    latestNum, _ := strconv.Atoi(latestVer)
+    nextNum := latestNum + 1
+
+    // 2. 检查是否有下一个配置存在
+    nextConfigKey := "config-" + fmt.Sprint(nextNum)
+    nextConfigValue, _, err := sck.IKVClerk.Get(nextConfigKey)
+    if err != rpc.OK {
+        return  // 没有未完成的配置变更
+    }
+
+    // 3. 有未完成的配置变更，继续执行
+    newCfg := shardcfg.FromString(nextConfigValue)
+    oldCfg := sck.Query()
+
+    // 继续执行迁移
+    for shard := 0; shard < NShards; shard++ {
+        oldGid := oldCfg.Shards[shard]
+        newGid := newCfg.Shards[shard]
+
+        if oldGid == newGid {
+            continue  // 这个 shard 已完成
+        }
+
+        // 迁移未完成的 shard
+        if oldGid != 0 && newGid != 0 {
+            sck.migrateShard(oldGid, newGid, shard, newCfg.Num, newCfg)
+        } else if oldGid != 0 {
+            sck.removeShard(oldGid, shard, newCfg.Num)
+        }
+    }
+
+    // 4. 更新 latest 指针
+    sck.IKVClerk.Put("latest", fmt.Sprint(nextNum), latestVersion)
+}
+```
+
+### 恢复流程图
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Controller 恢复流程                                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  场景：Controller 在配置变更过程中崩溃/分区                                    │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  崩溃时的状态                                                         │    │
+│  │  - latest = 10                                                       │    │
+│  │  - config-11 存在（已保存）                                          │    │
+│  │  - shard 2,3 部分迁移完成                                            │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  新 Controller 启动，调用 InitController()                           │    │
+│  │                                                                      │    │
+│  │  Step 1: 检测未完成的配置                                            │    │
+│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
+│  │  │ latestVer = "10"                                              │    │    │
+│  │  │ nextNum = 11                                                  │    │    │
+│  │  │ Get("config-11") → 成功 ✅                                     │    │    │
+│  │  │ → 发现未完成的配置变更！                                       │    │    │
+│  │  └─────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                      │    │
+│  │  Step 2: 继续执行迁移                                                │    │
+│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
+│  │  │ for each shard:                                              │    │    │
+│  │  │   if oldCfg.Shards[shard] == newCfg.Shards[shard]:           │    │    │
+│  │  │     continue  // 已完成，跳过                                 │    │    │
+│  │  │   else:                                                       │    │    │
+│  │  │     migrateShard(...)  // 继续迁移                            │    │    │
+│  │  └─────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                      │    │
+│  │  Step 3: 更新 latest 指针                                            │    │
+│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
+│  │  │ Put("latest", "11", version)                                  │    │    │
+│  │  │ → 配置变更完成！                                             │    │    │
+│  │  └─────────────────────────────────────────────────────────────┘    │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│                                                                             │
+│  最终状态：                                                                  │
+│  - latest = 11                                                              │
+│  - config-11 完全生效                                                       │
+│  - 所有 shard 迁移完成                                                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 关键设计点
+
+### 1. 配置保存顺序
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                   配置保存顺序对比                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  5A 实现（无容错）：                                              │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐                   │
+│  │ 迁移 shard │ → │保存配置  │ → │更新latest │                   │
+│  └──────────┘    └──────────┘    └──────────┘                   │
+│      ↓ 崩溃                                                              │
+│     配置丢失，无法恢复 ❌                                               │
+│                                                                 │
+│  5B 实现（容错）：                                                   │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐                   │
+│  │保存配置  │ → │ 迁移 shard │ → │更新latest │                   │
+│  └──────────┘    └──────────┘    └──────────┘                   │
+│      ↓ 崩溃                                                              │
+│     配置已保存，可以恢复 ✅                                             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 2. 幂等性保证
+
+恢复机制必须正确处理部分完成的迁移：
+
+```go
+// 关键：每次迁移前检查 shard 是否已经迁移
+currentCfg := sck.Query()
+currentGid := currentCfg.Shards[shard]
+if currentGid != fromGid {
+    // shard 已经迁移到其他 group，跳过
+    return
+}
+```
+
+这确保了：
+- 如果 shard 已经完全迁移（Freeze → Install → Delete），跳过
+- 如果 shard 部分迁移（比如 Freeze 完成，Install 未完成），重新执行会通过幂等性机制处理
+
+### 3. Clerk 的重试机制
+
+ShardGrp Clerk 已经实现了无限重试：
+
+```go
+func (ck *Clerk) FreezeShard(s Tshid, num Tnum) ([]byte, Err) {
+    for {
+        reply := FreezeShardReply{}
+        ok := ck.clnt.Call(ck.servers[i], "KVServer.FreezeShard", &args, &reply)
+
+        if ok && reply.Err == OK {
+            return reply.State, reply.Err
+        }
+
+        // 失败则重试
+        i = (i + 1) % len(ck.servers)
+        time.Sleep(50 * time.Millisecond)
+    }
+}
+```
+
+这意味着：
+- 如果 group 宕机，Clerk 会持续重试
+- 当 group 恢复后，请求会自动成功
+- 不需要额外的重试逻辑
+
+## 测试结果
+
+| 测试名称 | 网络 | 耗时 | RPCs | Ops | 结果 |
+|---------|------|------|------|-----|------|
+| Join/Leave while shardgrp down | reliable | 4.4s | 2385 | 120 | ✅ PASS |
+| Recover controller | reliable | 20.3s | 9105 | 360 | ✅ PASS |
+
+**测试说明：**
+- **TestJoinLeave5B**: 测试当 shard group 宕机时，join/leave 操作能够等待并最终完成
+- **TestRecoverCtrler5B**: 测试当 controller 崩溃/分区后，新的 controller 能够恢复并完成未完成的配置变更
+
+## 5B 总结
+
+Lab 5B 的核心挑战在于：
+1. **配置变更的原子性**：使用预保存配置策略，确保配置信息不会丢失
+2. **恢复机制的幂等性**：正确处理部分完成的迁移，避免重复操作
+3. **与 Clerk 重试的配合**：利用 Clerk 的重试机制处理临时的 group 不可用
+
+关键设计：
+- **预保存配置**：在迁移之前保存配置，但延迟更新 latest 指针
+- **恢复检测**：通过检查 `config-(latest+1)` 是否存在来发现未完成的配置变更
+- **幂等迁移**：每次迁移前检查 shard 的当前状态，避免重复操作
+
+---
+
+# Lab 5C: 并发 Controller 与配置编号修复
+
+## 实验目标
+
+Lab 5C 在 5A/5B 的基础上增加了对并发 controller 的支持：
+1. **并发 Controller**：多个 controller 可能同时执行 ChangeConfigTo，只有一个应该完成
+2. **Controller Partition**：当 controller 被分区时，新的 controller 能够接管并完成配置变更
+3. **配置编号修复**：修复 InitConfig 中硬编码配置编号的问题
+
+## 核心问题分析
+
+### 问题 1: 并发 Controller 的竞争条件
+
+**场景：**
+```
+时间线：
+t0: Controller A 开始处理 Config N → Config N+1
+t1: Controller B 也开始处理 Config N → Config N+1
+t2: 只有其中一个 controller 应该完成配置变更
+```
+
+**为什么不会冲突？**
+
+关键在于我们使用了 KVRaft 作为配置存储，而 KVRaft 保证：
+- 对于同一个 key 的 Put 操作，只有一个会成功
+- 其他的 Put 会因为 version 冲突而返回 ErrVersion
+
+但实际上，我们不需要额外的机制来处理并发 controller，因为：
+1. 每个 config 都有唯一的编号（config-0, config-1, config-2, ...）
+2. 不同的 config 不会冲突
+3. 只有在处理同一个 config 时才可能冲突，但这种情况下的冲突会被 KVRaft 的 CAS 机制处理
+
+### 问题 2: InitConfig 硬编码配置编号
+
+**Bug 发现过程：**
+
+在 5C 测试中，我们发现了一个关键问题：
+
+```go
+// setupKVService 中的调用
+scfg := shardcfg.MakeShardConfig()  // Num=0
+scfg.JoinBalance(...)               // Num 变为 1!
+ts.sck.InitConfig(scfg)             // 传入 Num=1 的配置
+```
+
+但是 InitConfig 的原始实现：
+```go
+func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
+    configStr := cfg.String()
+    sck.IKVClerk.Put("config-0", configStr, 0)  // 硬编码 "config-0"！
+    sck.IKVClerk.Put("latest", "0", 0)          // 硬编码 "0"！
+}
+```
+
+**问题：**
+- setupKVService 创建的配置 Num=1（因为调用了 JoinBalance）
+- 但 InitConfig 硬编码保存为 "config-0"，latest 设为 "0"
+- 导致配置编号与实际内容不匹配
+
+**解决方案：**
+```go
+func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
+    configStr := cfg.String()
+    configKey := "config-" + fmt.Sprint(cfg.Num)  // 使用 cfg.Num
+    sck.IKVClerk.Put(configKey, configStr, 0)
+    sck.IKVClerk.Put("latest", fmt.Sprint(cfg.Num), 0)  // 使用 cfg.Num
+}
+```
+
+### 问题 3: InitController 只检查 latest+1
+
+**Bug 发现过程：**
+
+在 TestPartitionControllerJoin5C 中，我们发现：
+
+```
+日志输出：
+[InitController] latest=0
+[InitController] config-1 not found, nothing to recover
+[ChangeConfigTo] old.Num=1 new.Num=2  // 说明 Config 1 已存在！
+```
+
+**矛盾：**
+- InitController 读到 latest=0
+- 但 ChangeConfigTo 显示 old.Num=1，说明 Config 1 已经被保存了
+
+**根本原因：**
+
+setupKVService 调用 JoinBalance 后，配置的 Num 变为 1，但由于原始 InitConfig 的 bug：
+- config-1 被保存为 "config-0"（错误的 key）
+- latest 被设置为 "0"
+
+当后续测试运行时：
+- Query() 读取 latest="0"，返回 config-0（实际是 Num=1 的配置）
+- ts.join 创建新配置，Num 从 1 递增到 2
+- InitController 检查 config-(latest+1) = config-1，但实际应该检查 config-2
+
+**解决方案：**
+
+修改 InitController 检查所有未来的配置：
+```go
+func (sck *ShardCtrler) InitController() {
+    latestVer, _, _ := sck.IKVClerk.Get("latest")
+    latestNum, _ := strconv.Atoi(latestVer)
+
+    // 找到存在的最大编号的未完成配置
+    var nextNum shardcfg.Tnum
+    var nextConfigValue string
+    for i := 1; i <= 100; i++ {
+        candidateNum := shardcfg.Tnum(latestNum + int(i))
+        candidateKey := "config-" + fmt.Sprint(candidateNum)
+        value, _, err := sck.IKVClerk.Get(candidateKey)
+        if err == rpc.OK {
+            // 找到了，记录它，继续找更高的
+            nextNum = candidateNum
+            nextConfigValue = value
+        } else {
+            break
+        }
+    }
+
+    if nextNum == 0 {
+        return  // 没有未完成的配置
+    }
+
+    // 继续迁移...
+}
+```
+
+## 并发 Controller 的工作机制
+
+### 场景 1: Controller Partition
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Controller Partition 场景                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  Controller A 开始处理 Config 1 → Config 2                           │    │
+│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
+│  │  │ 1. Put("config-2", configStr)  ✅ 成功                      │    │    │
+│  │  │ 2. 开始迁移 shard...                                        │    │    │
+│  │  │ 3. Controller A 被分区！                                   │    │    │
+│  │  └─────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                      │    │
+│  │  状态：                                                               │    │
+│  │  - latest = 1                                                        │    │
+│  │  - config-2 存在（已保存）                                           │    │
+│  │  - 迁移未完成                                                         │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  Controller B 启动，调用 InitController()                            │    │
+│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
+│  │  │ 1. Get("latest") → "1"                                       │    │    │
+│  │  │ 2. 检查 config-2...config-N                                  │    │    │
+│  │  │ 3. 发现 config-2 存在！                                      │    │    │
+│  │  │ 4. 继续完成 Config 2 的迁移                                   │    │    │
+│  │  │ 5. Put("latest", "2", version)  ✅                           │    │    │
+│  │  └─────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                      │    │
+│  │  最终状态：                                                           │    │
+│  │  - latest = 2                                                        │    │
+│  │  - Config 2 完全生效                                                 │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 场景 2: 并发 Controller
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    并发 Controller 场景                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  Controller A 和 B 同时启动                                          │    │
+│  │                                                                      │    │
+│  │  Controller A:                                     Controller B:     │    │
+│  │  ┌──────────────────────┐                    ┌──────────────────────┐│    │
+│  │  │1. Query() → Config 1 │                    │1. Query() → Config 1 ││    │
+│  │  │2. JoinBalance()      │                    │2. JoinBalance()      ││    │
+│  │  │   → Config 2 (Num=2) │                    │   → Config 2 (Num=2) ││    │
+│  │  │3. Put("config-2")    │                    │3. Put("config-2")    ││    │
+│  │  │   ✅ 成功            │                    │   ❌ ErrVersion(已存在)││    │
+│  │  │4. 开始迁移           │                    │4. 重新检查           ││    │
+│  │  │5. Put("latest","2")  │                    │5. 发现 Config 2 已存在││    │
+│  │  │   ✅ 成功            │                    │6. 直接返回           ││    │
+│  │  └──────────────────────┘                    └──────────────────────┘│    │
+│  │                                                                      │    │
+│  │  结果：只有 Controller A 完成了配置变更                               │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**关键点：**
+- KVRaft 的 Put 操作对于相同的 key 和 version 只会成功一次
+- 第二个 controller 会因为 version 冲突而检测到配置已存在
+- 第二个 controller 会重新查询，发现配置已被处理，直接返回
+
+## 测试结果
+
+| 测试名称 | 网络 | 耗时 | RPCs | Ops | 结果 |
+|---------|------|------|------|-----|------|
+| Concurrent ctrlers | reliable | 4.2s | 5439 | 120 | ✅ PASS |
+| Concurrent ctrlers | unreliable | 51.9s | 7631 | 120 | ✅ PASS |
+| Partition controller in join | reliable | 4.6s | 2438 | 120 | ✅ PASS |
+| Controllers with leased leadership | reliable | 26.0s | 11242 | 360 | ✅ PASS |
+| Controllers with leased leadership | unreliable | 95.3s | 10437 | 240 | ✅ PASS |
+| Controllers with leased leadership (nclnt=5) | reliable | 60.5s | 34478 | 2692 | ✅ PASS |
+| Controllers with leased leadership (nclnt=5) | unreliable | 62.3s | 18356 | 1238 | ✅ PASS |
+
+**测试说明：**
+- **Concurrent ctrlers**: 测试多个 controller 同时启动时的行为
+- **Partition controller in join**: 测试 controller 被分区后新 controller 的接管
+- **Controllers with leased leadership**: 测试 controller 在 leader 租约期间的行为
+- **nclnt=5**: 测试并发客户端场景下的正确性
+
+## 5C 总结
+
+Lab 5C 的核心挑战在于：
+1. **并发 Controller 处理**：多个 controller 可能同时工作，需要保证正确性
+2. **配置编号的正确性**：InitConfig 必须使用配置的实际编号而不是硬编码
+3. **恢复机制的完备性**：InitController 需要检查所有未来的配置，而不仅仅是 latest+1
+
+关键设计：
+- **使用 KVRaft 的幂等性**：利用 KVRaft 对相同 key-version Put 只成功一次的特性
+- **修复配置编号**：InitConfig 使用 cfg.Num 而不是硬编码
+- **完整的恢复检测**：InitController 检查所有可能的未完成配置
+
+---
+
+# 完整的 Debug 过程与踩坑总结
+
+## 踩坑 1: Version Rollback 问题
+
+**现象：**
+```
+Porcupine 报告：history is not linearizable
+[DoOp Put] gid=1 key=k0 shard=10 version=215 OK (updated to 216)
+[DoOp Put] gid=7 key=k0 shard=10 version=206 OK (updated to 207)
+```
+
+**原因：**
+1. FreezeShard 收集了 version=215 的数据
+2. 但在数据传输过程中，源 group 继续处理 Put，version 增加到 220+
+3. InstallShard 将旧数据（v215）安装到目标 group
+4. 客户端访问新 group 时读到旧版本
+
+**解决思路（用户提供）：**
+"当 freezeshard 之后，对应的 shard 不应该允许 put 操作，只能允许 get 操作，是不是这样更合理？"
+
+**最终解决方案：**
+```go
+// doFreezeShard 中：冻结 shard
+kv.frozenShards[args.Shard] = true
+
+// DoOp 的 Get/Put 中：检查冻结状态
+if frozen, ok := kv.frozenShards[shard]; ok && frozen {
+    return ErrWrongGroup  // 拒绝访问，让客户端重试
+}
+```
+
+## 踩坑 2: Get 操作不允许返回 ErrMaybe
+
+**现象：**
+```
+Fatal: 0: Get "k0" err ErrMaybe
+```
+
+**原因分析：**
+查看 kvtest.go 中的 GetJson 函数，发现 Get 只接受 OK，不允许其他错误。
+
+**解决方案：**
+Get 在 freeze 期间返回 ErrWrongGroup，而不是 ErrMaybe：
+```go
+if frozen, ok := kv.frozenShards[shard]; ok && frozen {
+    return ErrWrongGroup  // 而不是 ErrMaybe
+}
+```
+
+## 踩坑 3: 重复 DeleteShard 请求导致迁移状态不一致
+
+**现象：**
+```
+[doDeleteShard] gid=9 shard=10 num=17 OLD (maxNum=17) -> OK
+[DoOp Get] gid=9 key=k0 shard=10 OK version=200  // 仍然能读取！
+```
+
+**原因：**
+重复请求直接返回 OK，但没有设置 `migratedShards[shard] = true`。
+
+**解决方案：**
+```go
+if maxNum, ok := kv.maxShardNum[args.Shard]; ok {
+    if args.Num < maxNum {
+        return ErrMaybe  // 旧请求，拒绝
+    } else if args.Num == maxNum {
+        // 重复请求：确保标记已迁移
+        kv.migratedShards[args.Shard] = true
+        delete(kv.frozenShards, args.Shard)
+        return OK
+    }
+}
+```
+
+## 踩坑 4: InstallShard 后 Put 返回 ErrWrongGroup
+
+**现象：**
+```
+[doInstallShard] gid=1 shard=10 num=17 OK, installed 1 keys
+[DoOp Put] gid=1 key=k0 shard=10 version=345 ErrWrongGroup (migrated)
+```
+
+**原因：**
+doInstallShard 没有清除 `migratedShards[shard]`。
+
+**解决方案：**
+```go
+func (kv *KVServer) doInstallShard(args *shardrpc.InstallShardArgs) shardrpc.InstallShardReply {
+    // ...
+    // 关键：清除迁移标记
+    delete(kv.migratedShards, args.Shard)
+    // ...
+}
+```
+
+## 踩坑 5: InitConfig 硬编码配置编号
+
+**现象：**
+```
+TestPartitionControllerJoin5C 失败
+[InitController] latest=0
+[ChangeConfigTo] old.Num=1 new.Num=2  // 矛盾！
+```
+
+**原因：**
+setupKVService 创建的配置 Num=1，但 InitConfig 硬编码保存为 "config-0"。
+
+**解决方案：**
+```go
+func (sck *ShardCtrler) InitConfig(cfg *shardcfg.ShardConfig) {
+    configKey := "config-" + fmt.Sprint(cfg.Num)  // 使用 cfg.Num
+    sck.IKVClerk.Put(configKey, configStr, 0)
+    sck.IKVClerk.Put("latest", fmt.Sprint(cfg.Num), 0)  // 使用 cfg.Num
+}
+```
+
+## 踩坑 6: InitController 只检查 latest+1
+
+**现象：**
+```
+[InitController] latest=0
+[InitController] config-1 not found, nothing to recover
+但 config-2 实际存在！
+```
+
+**原因：**
+由于 InitConfig 的 bug，配置编号跳跃了。InitController 只检查 latest+1，找不到 config-2。
+
+**解决方案：**
+检查所有未来的配置，找到最大的未完成配置：
+```go
+for i := 1; i <= 100; i++ {
+    candidateNum := shardcfg.Tnum(latestNum + int(i))
+    candidateKey := "config-" + fmt.Sprint(candidateNum)
+    value, _, err := sck.IKVClerk.Get(candidateKey)
+    if err == rpc.OK {
+        nextNum = candidateNum
+        nextConfigValue = value
+    } else {
+        break
+    }
+}
+```
+
+## 踩坑 7: Put 在 freeze 期间返回 ErrMaybe 导致卡死
+
+**现象：**
+```
+测试卡死不动
+```
+
+**原因：**
+Put 在 freeze 期间返回 ErrMaybe，客户端不断重试但没有进展。
+
+**解决方案：**
+Put 也返回 ErrWrongGroup，让客户端重新查询配置：
+```go
+if frozen, ok := kv.frozenShards[shard]; ok && frozen {
+    return ErrWrongGroup  // 而不是 ErrMaybe
+}
+```
+
+## 总结：关键设计原则
+
+1. **Freeze 期间完全拒绝操作**：Get 和 Put 都返回 ErrWrongGroup
+2. **幂等性是关键**：所有 RPC 操作都需要正确处理重复请求
+3. **状态一致性**：frozenShards、maxShardNum、migratedShards 必须协同更新
+4. **配置编号要正确**：使用配置的实际编号，不要硬编码
+5. **恢复要全面**：检查所有可能的未完成配置
+
