@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"6.5840/kvraft1"
 	"6.5840/kvraft1/rsm"
-	"6.5840/kvsrv1"
 	"6.5840/kvsrv1/rpc"
 	"6.5840/kvtest1"
 	"6.5840/labrpc"
@@ -39,6 +39,11 @@ const (
 	INTERGRPDELAY = 200            // time in ms between group changes
 )
 
+// StartKVServer implements tester.FstartServer signature for shardkv tests
+func (ts *Test) StartKVServer(servers []*labrpc.ClientEnd, gid tester.Tgid, me int, persister *tester.Persister) []tester.IService {
+	return kvraft.StartKVServer(servers, gid, me, persister, ts.maxraftstate)
+}
+
 // Setup kvserver for the shard controller and make the controller
 func MakeTestMaxRaft(t *testing.T, part string, reliable, partition bool, maxraftstate int) *Test {
 	ts := &Test{
@@ -47,7 +52,7 @@ func MakeTestMaxRaft(t *testing.T, part string, reliable, partition bool, maxraf
 		partition:    partition,
 		maxraftstate: maxraftstate,
 	}
-	cfg := tester.MakeConfig(t, 1, reliable, kvsrv.StartKVServer)
+	cfg := tester.MakeConfig(t, 3, reliable, ts.StartKVServer)
 	ts.Test = kvtest.MakeTest(t, cfg, false, ts)
 	// XXX to avoid panic
 	tester.AnnotateTest(part, 1)
@@ -88,10 +93,10 @@ func (ts *Test) makeShardCtrlerClnt() (*shardctrler.ShardCtrler, *tester.Clnt) {
 	return shardctrler.MakeShardCtrler(clnt), clnt
 }
 
-func (ts *Test) makeKVClerk() *kvsrv.Clerk {
+func (ts *Test) makeKVClerk() *kvraft.Clerk {
 	srv := tester.ServerName(tester.GRP0, 0)
 	clnt := ts.Config.MakeClient()
-	return kvsrv.MakeClerk(clnt, srv).(*kvsrv.Clerk)
+	return kvraft.MakeClerk(clnt, []string{srv}).(*kvraft.Clerk)
 }
 
 func (ts *Test) newGid() tester.Tgid {
