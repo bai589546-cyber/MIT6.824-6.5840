@@ -1,0 +1,45 @@
+<svg viewBox="0 0 1280 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">MIT 6.5840 repository highlights</title>
+  <desc id="desc">A summary graphic showing the self-study repository highlights in a four-card layout.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fffdf8"/>
+      <stop offset="100%" stop-color="#f6ede2"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="420" rx="32" fill="url(#bg)"/>
+
+  <text x="48" y="60" fill="#8d503e" font-size="16" font-weight="700" letter-spacing="2.2" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    REPOSITORY AT A GLANCE
+  </text>
+  <text x="48" y="108" fill="#2f241e" font-size="40" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">
+    What this repo actually offers
+  </text>
+
+  <rect x="48" y="146" width="568" height="104" rx="22" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="664" y="146" width="568" height="104" rx="22" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="48" y="272" width="568" height="104" rx="22" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="664" y="272" width="568" height="104" rx="22" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+
+  <rect x="48" y="146" width="568" height="10" rx="22" fill="#8d503e"/>
+  <rect x="664" y="146" width="568" height="10" rx="22" fill="#166f8d"/>
+  <rect x="48" y="272" width="568" height="10" rx="22" fill="#3b7c5e"/>
+  <rect x="664" y="272" width="568" height="10" rx="22" fill="#5f5198"/>
+
+  <text x="76" y="204" fill="#8d503e" font-size="46" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">9</text>
+  <text x="132" y="202" fill="#2f241e" font-size="26" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">lab stages</text>
+  <text x="76" y="232" fill="#5b4c43" font-size="18" font-family="system-ui, -apple-system, Segoe UI, sans-serif">from Lab 1 to Lab 5C, visible as a full learning arc</text>
+
+  <text x="692" y="204" fill="#166f8d" font-size="46" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">7</text>
+  <text x="748" y="202" fill="#2f241e" font-size="26" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Markdown reports</text>
+  <text x="692" y="232" fill="#5b4c43" font-size="18" font-family="system-ui, -apple-system, Segoe UI, sans-serif">design notes, debugging records, and test results</text>
+
+  <text x="76" y="318" fill="#3b7c5e" font-size="20" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">MAPREDUCE -> RAFT -></text>
+  <text x="76" y="344" fill="#3b7c5e" font-size="20" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">KVRAFT -> SHARDKV</text>
+  <text x="76" y="366" fill="#5b4c43" font-size="17" font-family="system-ui, -apple-system, Segoe UI, sans-serif">one continuous distributed systems progression</text>
+
+  <text x="692" y="320" fill="#5f5198" font-size="24" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Public learning record</text>
+  <text x="692" y="346" fill="#5b4c43" font-size="17" font-family="system-ui, -apple-system, Segoe UI, sans-serif">meant to help the next learner read faster</text>
+  <text x="692" y="368" fill="#5b4c43" font-size="17" font-family="system-ui, -apple-system, Segoe UI, sans-serif">and get unstuck sooner</text>
+</svg>

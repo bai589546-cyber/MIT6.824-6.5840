@@ -1,0 +1,53 @@
+<svg viewBox="0 0 1280 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">MIT 6.5840 learning roadmap</title>
+  <desc id="desc">A five-step roadmap from MapReduce to ShardKV for the repository landing page.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fffdf8"/>
+      <stop offset="100%" stop-color="#f6ede2"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="360" rx="32" fill="url(#bg)"/>
+  <text x="48" y="56" fill="#8d503e" font-size="16" font-weight="700" letter-spacing="2.2" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    LEARNING ROADMAP
+  </text>
+  <text x="48" y="100" fill="#2f241e" font-size="34" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">
+    A direct path from basic distribution to sharding
+  </text>
+
+  <line x1="120" y1="202" x2="1160" y2="202" stroke="#b8aa9e" stroke-width="6" stroke-linecap="round"/>
+
+  <circle cx="150" cy="202" r="18" fill="#8d503e"/>
+  <circle cx="392" cy="202" r="18" fill="#b45e3b"/>
+  <circle cx="634" cy="202" r="18" fill="#166f8d"/>
+  <circle cx="876" cy="202" r="18" fill="#c98434"/>
+  <circle cx="1118" cy="202" r="18" fill="#5f5198"/>
+
+  <rect x="78" y="118" width="144" height="56" rx="18" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="320" y="118" width="144" height="56" rx="18" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="550" y="118" width="168" height="56" rx="18" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="804" y="118" width="144" height="56" rx="18" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+  <rect x="1038" y="118" width="160" height="56" rx="18" fill="#fffdf9" stroke="#d7c7bb" stroke-width="2"/>
+
+  <text x="150" y="153" text-anchor="middle" fill="#8d503e" font-size="18" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LAB 1</text>
+  <text x="392" y="153" text-anchor="middle" fill="#b45e3b" font-size="18" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LAB 2</text>
+  <text x="634" y="153" text-anchor="middle" fill="#166f8d" font-size="18" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LAB 3A-3D</text>
+  <text x="876" y="153" text-anchor="middle" fill="#c98434" font-size="18" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LAB 4</text>
+  <text x="1118" y="153" text-anchor="middle" fill="#5f5198" font-size="18" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LAB 5A-5C</text>
+
+  <text x="150" y="248" text-anchor="middle" fill="#2f241e" font-size="24" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">MapReduce</text>
+  <text x="150" y="278" text-anchor="middle" fill="#65554b" font-size="16" font-family="system-ui, -apple-system, Segoe UI, sans-serif">task scheduling</text>
+
+  <text x="392" y="248" text-anchor="middle" fill="#2f241e" font-size="24" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">KV Server</text>
+  <text x="392" y="278" text-anchor="middle" fill="#65554b" font-size="16" font-family="system-ui, -apple-system, Segoe UI, sans-serif">linearizability</text>
+
+  <text x="634" y="248" text-anchor="middle" fill="#2f241e" font-size="24" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">Raft</text>
+  <text x="634" y="278" text-anchor="middle" fill="#65554b" font-size="16" font-family="system-ui, -apple-system, Segoe UI, sans-serif">election, logs, persistence</text>
+
+  <text x="876" y="248" text-anchor="middle" fill="#2f241e" font-size="24" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">KVRaft</text>
+  <text x="876" y="278" text-anchor="middle" fill="#65554b" font-size="16" font-family="system-ui, -apple-system, Segoe UI, sans-serif">client semantics</text>
+
+  <text x="1118" y="248" text-anchor="middle" fill="#2f241e" font-size="24" font-weight="700" font-family="system-ui, -apple-system, Segoe UI, sans-serif">ShardKV</text>
+  <text x="1118" y="278" text-anchor="middle" fill="#65554b" font-size="16" font-family="system-ui, -apple-system, Segoe UI, sans-serif">migration and recovery</text>
+</svg>

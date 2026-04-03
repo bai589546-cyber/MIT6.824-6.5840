@@ -1,0 +1,88 @@
+<svg viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">MIT 6.5840 self-study repository hero banner</title>
+  <desc id="desc">A hero banner for a public MIT 6.5840 self-study repository, covering the path from MapReduce to ShardKV.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbf4ea"/>
+      <stop offset="50%" stop-color="#f8efe4"/>
+      <stop offset="100%" stop-color="#f3f5f2"/>
+    </linearGradient>
+    <radialGradient id="warm" cx="18%" cy="16%" r="56%">
+      <stop offset="0%" stop-color="#d75b45" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#d75b45" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cool" cx="80%" cy="76%" r="50%">
+      <stop offset="0%" stop-color="#2d7b91" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#2d7b91" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 36" fill="none" stroke="#b9ab9d" stroke-opacity="0.14" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="640" rx="36" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1280" height="640" rx="36" fill="url(#warm)"/>
+  <rect x="0" y="0" width="1280" height="640" rx="36" fill="url(#cool)"/>
+  <rect x="0" y="0" width="1280" height="640" rx="36" fill="url(#grid)"/>
+
+  <circle cx="1110" cy="108" r="96" fill="#ffffff" fill-opacity="0.42"/>
+  <circle cx="1110" cy="108" r="58" fill="#d75b45" fill-opacity="0.08"/>
+  <circle cx="1180" cy="520" r="132" fill="#ffffff" fill-opacity="0.28"/>
+
+  <rect x="72" y="72" width="600" height="496" rx="28" fill="#fffdf9" fill-opacity="0.82" stroke="#d3c2b5" stroke-width="2"/>
+  <text x="114" y="126" fill="#8d503e" font-size="16" font-weight="700" letter-spacing="2.8" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    PUBLIC SELF-STUDY REPOSITORY
+  </text>
+  <text x="114" y="222" fill="#312621" font-size="92" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">
+    MIT 6.5840
+  </text>
+  <text x="114" y="274" fill="#6f5548" font-size="26" font-weight="600" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    Distributed systems self-study notes
+  </text>
+  <text x="114" y="336" fill="#3a2e28" font-size="32" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">
+    From MapReduce to ShardKV
+  </text>
+  <text x="114" y="390" fill="#493c35" font-size="21" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    Code, reports, test results, and debugging notes
+  </text>
+  <text x="114" y="424" fill="#493c35" font-size="21" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
+    for a complete 6.5840 self-study path.
+  </text>
+
+  <g transform="translate(114 466)">
+    <rect x="0" y="0" width="118" height="34" rx="17" fill="#8d503e"/>
+    <text x="59" y="22" text-anchor="middle" fill="#fff9f4" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">MAPREDUCE</text>
+    <rect x="128" y="0" width="72" height="34" rx="17" fill="#166f8d"/>
+    <text x="164" y="22" text-anchor="middle" fill="#f6fbff" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">KV</text>
+    <rect x="210" y="0" width="88" height="34" rx="17" fill="#3b7c5e"/>
+    <text x="254" y="22" text-anchor="middle" fill="#f4fff8" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">RAFT</text>
+    <rect x="308" y="0" width="106" height="34" rx="17" fill="#c98434"/>
+    <text x="361" y="22" text-anchor="middle" fill="#fffaf1" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">KVRAFT</text>
+    <rect x="424" y="0" width="94" height="34" rx="17" fill="#5f5198"/>
+    <text x="471" y="22" text-anchor="middle" fill="#fbf8ff" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">SHARDKV</text>
+  </g>
+
+  <line x1="114" y1="532" x2="586" y2="532" stroke="#b6a89b" stroke-width="2"/>
+  <text x="114" y="564" fill="#7a6b61" font-size="17" font-family="'SFMono-Regular', Menlo, Consolas, monospace">
+    readable README first, then code paths and reports
+  </text>
+
+  <rect x="734" y="92" width="470" height="124" rx="24" fill="#fffdf9" fill-opacity="0.9" stroke="#d3c2b5" stroke-width="2"/>
+  <rect x="734" y="250" width="470" height="124" rx="24" fill="#fffdf9" fill-opacity="0.9" stroke="#d3c2b5" stroke-width="2"/>
+  <rect x="734" y="408" width="470" height="124" rx="24" fill="#fffdf9" fill-opacity="0.9" stroke="#d3c2b5" stroke-width="2"/>
+
+  <rect x="762" y="108" width="112" height="28" rx="14" fill="#8d503e"/>
+  <text x="818" y="127" text-anchor="middle" fill="#fff8f2" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LABS 1-2</text>
+  <text x="762" y="174" fill="#2f241e" font-size="29" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">MapReduce and KV basics</text>
+  <text x="762" y="206" fill="#5b4c43" font-size="18" font-family="system-ui, -apple-system, Segoe UI, sans-serif">scheduling, faults, exactly-once</text>
+
+  <rect x="762" y="266" width="126" height="28" rx="14" fill="#166f8d"/>
+  <text x="825" y="285" text-anchor="middle" fill="#f5fbff" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LABS 3A-4</text>
+  <text x="762" y="332" fill="#2f241e" font-size="29" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">Raft, persistence, and KVRaft</text>
+  <text x="762" y="364" fill="#5b4c43" font-size="18" font-family="system-ui, -apple-system, Segoe UI, sans-serif">election, replication, snapshots</text>
+
+  <rect x="762" y="424" width="126" height="28" rx="14" fill="#5f5198"/>
+  <text x="825" y="443" text-anchor="middle" fill="#fbf8ff" font-size="14" font-weight="700" font-family="'SFMono-Regular', Menlo, Consolas, monospace">LABS 5A-5C</text>
+  <text x="762" y="490" fill="#2f241e" font-size="29" font-weight="700" font-family="'Palatino Linotype', 'Book Antiqua', Georgia, serif">Shard migration and recovery</text>
+  <text x="762" y="522" fill="#5b4c43" font-size="18" font-family="system-ui, -apple-system, Segoe UI, sans-serif">controller safety, shard moves, recovery</text>
+</svg>
