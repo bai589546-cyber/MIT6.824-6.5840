@@ -178,7 +178,8 @@ func (sck *ShardCtrler) ChangeConfigTo(new *shardcfg.ShardConfig) {
 	configKey := "config-" + fmt.Sprint(new.Num)
 	// fmt.Printf("[ChangeConfigTo] saving config-%d\n", new.Num)
 	err := sck.IKVClerk.Put(configKey, configStr, 0)
-	if err != rpc.OK {
+	// 修复：//可能因为网络问题返回 ErrMaybe但是已经成功了
+	if err != rpc.OK && err != rpc.ErrMaybe {
 		// fmt.Printf("[ChangeConfigTo] failed to save config-%d: %v, returning\n", new.Num, err)
 		return
 	}
